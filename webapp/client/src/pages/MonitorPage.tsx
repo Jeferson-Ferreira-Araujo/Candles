@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
-import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import { PATTERN_LENGTH, TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
 import { PatternCard } from '../components/PatternCard.js';
 import { AutoAnalysisCard, type AssetTally, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
@@ -25,10 +25,10 @@ function describeEvent(e: AppEvent): string {
       return `${active} — candle fechado`;
     case 'PATTERN_PROGRESS': {
       const progress = (e.payload as any)?.progress;
-      return `${active} — ${progress?.matchedLength ?? '?'}/12 velas`;
+      return `${active} — ${progress?.matchedLength ?? '?'}/${PATTERN_LENGTH} velas`;
     }
     case 'PATTERN_CONFIRMED':
-      return `${active} — SINAL 12 CANDLES CONFIRMADO`;
+      return `${active} — SINAL CONFIRMADO — entrar PUT`;
     case 'PATTERN_INVALIDATED':
       return `${active} — padrão invalidado (${(e.payload as any)?.reason ?? '?'})`;
     default:
@@ -150,7 +150,9 @@ export function MonitorPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold">Monitor de Ativos</h1>
-        <p className="text-slate-400 text-sm">Acompanhamento em tempo real da formação da estratégia 12 Candles.</p>
+        <p className="text-slate-400 text-sm">
+          Acompanhamento em tempo real da formação do padrão ({PATTERN_LENGTH} velas + entrada PUT na seguinte).
+        </p>
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center justify-between gap-4 flex-wrap">
@@ -190,7 +192,8 @@ export function MonitorPage() {
           ))}
         </div>
         <div className="sm:ml-auto text-sm text-slate-300">
-          Após a 12ª vela fechar: <span className="font-semibold text-white">Entrar CALL na 13ª</span>
+          Após a {PATTERN_LENGTH}ª vela fechar (verde):{' '}
+          <span className="font-semibold text-white">Entrar PUT na {PATTERN_LENGTH + 1}ª</span>
         </div>
       </div>
 

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/db.js';
 import {
   CANDLE_SIZE_M1,
+  ENTRY_DIRECTION,
   type BacktestDaySummary,
   type BacktestRun,
   type BacktestSummary,
@@ -23,13 +24,14 @@ function isoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
 }
 
-function computeResult(candle13: Candle): TradeResult {
-  if (candle13.close > candle13.open) return 'WIN';
-  if (candle13.close < candle13.open) return 'LOSS';
+/** Ganha quando o candle fecha ACIMA da abertura — usado so para simular a direcao CALL (reentrada). */
+function computeResultForCall(candle: Candle): TradeResult {
+  if (candle.close > candle.open) return 'WIN';
+  if (candle.close < candle.open) return 'LOSS';
   return 'DOJI';
 }
 
-/** Mesmo criterio de computeResult, mas para uma entrada PUT: ganha quando o candle fecha ABAIXO da abertura. */
+/** Ganha quando o candle fecha ABAIXO da abertura — e a direcao real da 1a entrada (ENTRY_DIRECTION = PUT). */
 function computeResultForPut(candle: Candle): TradeResult {
   if (candle.close < candle.open) return 'WIN';
   if (candle.close > candle.open) return 'LOSS';
@@ -63,7 +65,7 @@ function combineWithGale1(occurrences: PatternOccurrence[], reentryDirection: 'C
       continue;
     }
     if (!o.candle14) continue;
-    results.push(reentryDirection === 'CALL' ? computeResult(o.candle14) : computeResultForPut(o.candle14));
+    results.push(reentryDirection === 'CALL' ? computeResultForCall(o.candle14) : computeResultForPut(o.candle14));
   }
   return results;
 }
@@ -134,9 +136,10 @@ function buildSummary(
 
   const lossOccurrences = occurrences.filter((o) => o.result === 'LOSS');
   const lossesWithCandle14 = lossOccurrences.filter((o) => o.candle14);
+  // A 1a entrada e ENTRY_DIRECTION (PUT): "mesma direcao" no gale repete PUT, "contraria" vira CALL.
   const reentry: BacktestSummary['reentry'] = {
-    combinedSameDirection: tallyResults(combineWithGale1(occurrences, 'CALL')),
-    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, 'PUT')),
+    combinedSameDirection: tallyResults(combineWithGale1(occurrences, ENTRY_DIRECTION)),
+    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, ENTRY_DIRECTION === 'PUT' ? 'CALL' : 'PUT')),
     consideredLosses: lossOccurrences.length,
     missingCandle14: lossOccurrences.length - lossesWithCandle14.length,
   };
@@ -185,20 +188,26 @@ export async function runBacktest(
       const tick = engine.onCandleClosed(activeId, candle);
 
       if (tick.kind === 'CONFIRMED') {
+        // candle13 = a entrada de verdade (hoje a 14a vela real, ver ENTRY_DIRECTION em
+        // strategyRule.ts) — nome do campo mantido por estabilidade de schema/tipos.
         const candle13 = candles[i + 1]; // pode ser undefined se for o ultimo candle do periodo
-        const candle14 = candles[i + 2]; // idem — so usado para simular reentrada, nunca para o resultado principal
+        const candle14 = candles[i + 2]; // candle seguinte a entrada — so usado para simular o Gale 1
         allOccurrences.push({
           // Prefixado com o id da propria rodada do backtest: sem isso, rodar o MESMO
           // backtest (mesmo ativo/periodo) duas vezes gerava o mesmo id de novo (baseado
-          // so em activeId + horario da 12a vela), violando o UNIQUE global da tabela.
-          id: `${id}-12CANDLES-${activeId}-${candle.to}-CALL`,
+          // so em activeId + horario da vela de confirmacao), violando o UNIQUE global da tabela.
+          id: `${id}-12CANDLES-${activeId}-${candle.to}-${ENTRY_DIRECTION}`,
           activeId,
           occurredAt: candle.to,
           candles: tick.window,
           wickPercentage11: tick.wickPercentage11,
           candle13,
           candle14,
-          result: candle13 ? computeResult(candle13) : undefined,
+          result: candle13
+            ? ENTRY_DIRECTION === 'PUT'
+              ? computeResultForPut(candle13)
+              : computeResultForCall(candle13)
+            : undefined,
           isFirstOfDay: false, // marcado abaixo, apos ordenar globalmente
         });
       }

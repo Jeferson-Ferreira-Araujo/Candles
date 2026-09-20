@@ -1,9 +1,10 @@
 import type { CandleColor } from '@polarium12c/shared';
+import { PATTERN_LENGTH } from '@polarium12c/shared';
 
 interface Props {
-  /** Cores ja fechadas e casadas com a regra, da mais antiga para a mais nova (0..12). */
+  /** Cores ja fechadas e casadas com a regra, da mais antiga para a mais nova (0..PATTERN_LENGTH). */
   received: CandleColor[];
-  total?: number; // total de slots a desenhar (12 para a regra 12 Candles)
+  total?: number; // total de slots a desenhar (PATTERN_LENGTH para a regra atual)
 }
 
 const SLOT_WIDTH = 17;
@@ -44,7 +45,7 @@ function CandleGlyph({ color, x, closed }: { color: CandleColor | 'EMPTY'; x: nu
   );
 }
 
-export function MiniCandles({ received, total = 12 }: Props) {
+export function MiniCandles({ received, total = PATTERN_LENGTH }: Props) {
   const width = total * SLOT_WIDTH + (total - 1) * SLOT_GAP;
 
   return (

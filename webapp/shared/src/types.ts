@@ -76,16 +76,23 @@ export interface PatternProgress {
   lastUpdatedAt: number; // epoch ms
 }
 
-/** Uma ocorrencia completa do padrao (ao vivo ou em backtest). */
+/**
+ * Uma ocorrencia completa do padrao (ao vivo ou em backtest).
+ *
+ * Nomes de campo (candle13/candle14) mantidos por estabilidade (schema do banco, tipos ja
+ * em uso) mesmo apos a regra crescer de 12 para 13 velas — hoje sao, na pratica, a vela de
+ * ENTRADA (14a real, sempre ENTRY_DIRECTION = PUT) e a vela SEGUINTE a ela (15a real, so
+ * usada para simular o Gale 1). Ver strategyRule.ts para a regra completa e ENTRY_DIRECTION.
+ */
 export interface PatternOccurrence {
   id: string;
   activeId: number;
-  occurredAt: number; // epoch seconds do fechamento da 12a vela
-  candles: Candle[]; // as 12 velas do padrao, da mais antiga a mais nova
+  occurredAt: number; // epoch seconds do fechamento da vela de confirmacao (hoje a 13a)
+  candles: Candle[]; // as velas do padrao (hoje 13), da mais antiga a mais nova
   wickPercentage11: number;
-  candle13?: Candle; // pode ser ausente em backtest se nao houver dado suficiente
+  candle13?: Candle; // a vela de ENTRADA — pode ser ausente em backtest se nao houver dado suficiente
   result?: TradeResult;
-  /** Candle seguinte ao candle13 — usado so para simular reentrada (CALL/PUT), nunca para o resultado principal. */
+  /** Candle seguinte a entrada (candle13) — usado so para simular o Gale 1, nunca para o resultado principal. */
   candle14?: Candle;
   isFirstOfDay: boolean;
 }
@@ -102,7 +109,7 @@ export type SignalStatus =
   | 'BLOCKED';
 
 export interface Signal {
-  id: string; // formato: 12CANDLES-{activeId}-{timestampCandle12}-CALL
+  id: string; // formato: 12CANDLES-{activeId}-{timestampVelaConfirmacao}-{ENTRY_DIRECTION}
   activeId: number;
   direction: Direction;
   createdAt: number; // epoch ms
@@ -227,14 +234,14 @@ export interface BacktestSummary {
   perAsset: Record<number, { wins: number; losses: number; dojis: number }>;
   /**
    * Sempre calculado, em toda execucao (nao depende de nenhum toggle): resultado FINAL de
-   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre CALL) ja ganhou,
-   * conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada no candle
-   * seguinte (candle14), simulada nas duas direcoes possiveis (repetindo CALL ou invertendo
-   * para PUT), para comparar as duas ao lado do resultado "so 1a entrada" (allOccurrences).
+   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre ENTRY_DIRECTION =
+   * PUT) ja ganhou, conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada
+   * no candle seguinte (candle14), simulada nas duas direcoes possiveis (repetindo PUT ou
+   * invertendo para CALL), para comparar as duas ao lado do resultado "so 1a entrada" (allOccurrences).
    */
   reentry: {
-    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale em CALL
-    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale em PUT
+    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale repetindo PUT
+    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale invertendo para CALL
     consideredLosses: number; // quantas ocorrencias perderam a 1a entrada (candidatas ao gale)
     missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo) — excluidas dos combinados acima
   };
