@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
@@ -42,10 +42,26 @@ export function MonitorPage() {
   const activeIds = settings?.selectedActiveIds ?? [];
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisState>({ status: 'idle' });
+  const analysisStartedAt = useRef<number | null>(null);
 
   useEffect(() => {
     api.getAssets().then(setAssets).catch(() => {});
   }, []);
+
+  // Atualiza "tempo decorrido" a cada segundo enquanto a analise roda, em vez de so quando
+  // um ativo termina (uma unica consulta pode levar varios segundos, e sem isso o relogio
+  // ficaria parado entre um resultado e outro).
+  useEffect(() => {
+    if (autoAnalysis.status !== 'loading') return;
+    const interval = setInterval(() => {
+      setAutoAnalysis((prev) =>
+        prev.status === 'loading' && analysisStartedAt.current !== null
+          ? { ...prev, elapsedMs: Date.now() - analysisStartedAt.current }
+          : prev
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [autoAnalysis.status]);
 
   function nameOf(id: number): string {
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
@@ -63,7 +79,9 @@ export function MonitorPage() {
       return;
     }
 
-    setAutoAnalysis({ status: 'loading', completed: 0, total: allAssets.length, currentAssetName: allAssets[0]!.name });
+    const startedAt = Date.now();
+    analysisStartedAt.current = startedAt;
+    setAutoAnalysis({ status: 'loading', completed: 0, total: allAssets.length, currentAssetName: allAssets[0]!.name, elapsedMs: 0 });
 
     const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
     const perAsset: Record<number, AssetTally> = {};
@@ -71,7 +89,13 @@ export function MonitorPage() {
 
     for (let i = 0; i < allAssets.length; i++) {
       const asset = allAssets[i]!;
-      setAutoAnalysis({ status: 'loading', completed: i, total: allAssets.length, currentAssetName: asset.name });
+      setAutoAnalysis({
+        status: 'loading',
+        completed: i,
+        total: allAssets.length,
+        currentAssetName: asset.name,
+        elapsedMs: Date.now() - startedAt,
+      });
       try {
         const { summary } = await api.runBacktest([asset.id], AUTO_ANALYSIS_DAYS);
         const t = summary.perAsset[asset.id] ?? summary.allOccurrences;
@@ -84,7 +108,7 @@ export function MonitorPage() {
       }
     }
 
-    setAutoAnalysis({ status: 'done', overall, perAsset, assets: allAssets, failedCount });
+    setAutoAnalysis({ status: 'done', overall, perAsset, assets: allAssets, failedCount, elapsedMs: Date.now() - startedAt });
   }
 
   return (
