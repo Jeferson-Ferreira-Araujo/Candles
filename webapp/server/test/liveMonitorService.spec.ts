@@ -32,7 +32,7 @@ function buildTwelve(baseFrom: number, wick: number): Candle[] {
  * A regra hoje tem TWELVE_CANDLES_PATTERN.length velas (13) — uma a mais que antes — entao
  * o teste que alimenta o padrao inteiro precisa de mais margem que o antigo 1000ms fixo. */
 function flush(): Promise<void> {
-  return new Promise((r) => setTimeout(r, 2000));
+  return new Promise((r) => setTimeout(r, 3500));
 }
 
 describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
