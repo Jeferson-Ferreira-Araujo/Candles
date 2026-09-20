@@ -56,7 +56,7 @@ Copie `server/.env.example` para `server/.env` e ajuste conforme necessario
 npm test
 ```
 
-## O que ja existe (Fases 1-4 do plano)
+## O que ja existe (Fases 1-5 e 8 do plano)
 
 1. **Arquitetura + banco** — schema SQLite (`server/src/db/schema.sql`) cobrindo candles,
    sinais, ordens, backtests/ocorrencias, configuracoes, resultado diario e eventos.
@@ -105,10 +105,39 @@ npm test
    captura de tela fornecida pelo usuario (dark theme, cards de estado MONITORANDO/
    ACOMPANHANDO/ATENCAO/PRE-SINAL/CONFIRMADO). Nenhum numero e fixo/mockado — tudo vem de
    `/api/*` e do WebSocket; estados vazios aparecem honestamente como "—"/"nenhum ainda".
-6. Integracao Polarium somente leitura validada em producao (candles ao vivo reais).
-7. Modo DEMO: SafetyGate (checklist de seguranca) + OrderService ligando PATTERN_CONFIRMED a `placeOrder`, na conta de pratica da Polarium. A pagina Operacoes ja existe mas ainda mostra um aviso honesto de que isso nao foi implementado.
-8. Modo REAL — permanece bloqueado (a UI ja desabilita a opcao).
-9. Reiniciar o monitor ao vivo automaticamente quando `selectedActiveIds` mudar nas configuracoes sem precisar reiniciar o servidor (hoje isso so e lido na subida do processo).
+6. **SafetyGate** (`server/src/orders/SafetyGate.ts`, funcao pura, 17 testes) — checklist
+   completo antes de qualquer ordem: sinal duplicado, modo (so opera em DEMO — OBSERVATION
+   nunca envia, REAL nunca e permitido nesta versao), kill switch (`robotActive`), conexao/
+   sessao (via `getServerTime()`), sincronismo de horario (tolerancia configuravel),
+   saldo conhecido, **payout conhecido** (nunca inventado — bloqueia se `getPayout()`
+   retornar `null`), valor minimo/saldo suficiente, Stop Win diario, Stop Loss diario,
+   maximo de operacoes/dia, e ordem pendente no mesmo ativo. Qualquer campo desconhecido
+   bloqueia (nunca assume "seguro"). Acumula TODOS os motivos de bloqueio, nao so o primeiro.
+7. **OrderService** (`server/src/orders/OrderService.ts`, 6 testes de integracao via
+   `MockBrokerAdapter`) — ouve `PATTERN_CONFIRMED`, roda o SafetyGate, e so entao persiste a
+   ordem (`INSERT` protegido por `UNIQUE(signal_id)`) **antes** de chamar
+   `broker.placeOrder()`. Se a chamada falhar/cair a conexao depois de persistir e antes de
+   confirmar, a ordem fica `UNKNOWN` — nunca reenviada. Resolve o resultado via polling de
+   `getOrderResult()`, atualiza `daily_results` (WIN/LOSS/DOJI, PnL, contagem) e dispara
+   eventos `STOP_WIN`/`STOP_LOSS` quando os limites diarios sao atingidos. Reconciliacao de
+   ordens `UNKNOWN` com `brokerOrderId` conhecido roda na subida do servidor
+   (`reconcileUnknownOrders` em `index.ts`). Pagina **Operacoes** agora mostra as ordens
+   reais (`GET /api/orders`), sem nenhum dado inventado.
+8. Modo REAL — permanece bloqueado (a UI ja desabilita a opcao, e o SafetyGate bloqueia
+   incondicionalmente mesmo que a opcao seja forcada por outro caminho).
+
+## O que ainda falta
+
+- Integracao Polarium somente leitura validada em producao (todo o fluxo acima so foi
+  testado de ponta a ponta contra o `MockBrokerAdapter`; falta confirmar com uma sessao
+  real — `BROKER_ADAPTER=polarium` + `POLARIUM_SSID`).
+- Reiniciar o monitor ao vivo (e o `OrderService`) automaticamente quando
+  `selectedActiveIds` mudar nas configuracoes, sem precisar reiniciar o servidor (hoje isso
+  so e lido na subida do processo).
+- Confirmar `Positions.getPositionsHistory()` no `PolariumAdapter` para reconciliar posicoes
+  ja fechadas (hoje reportado como `UNKNOWN` em vez de assumido).
+- Gale (a config existe e valida "no maximo 1 nivel", mas o `OrderService` ainda nao
+  implementa a logica de reentrada apos LOSS — so faz a entrada original).
 
 ## Seguranca (recapitulando o que ja esta implementado ou reservado no design)
 

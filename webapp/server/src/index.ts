@@ -9,6 +9,8 @@ import { loadSettings, saveSettings, listEvents, getDailyResult, insertEvent } f
 import { createBrokerAdapter } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
+import { OrderService } from './orders/OrderService.js';
+import { listUnknownOrders, listOrders, updateOrder } from './db/repositories.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const DB_PATH = process.env.DB_PATH ?? './data/app.db';
@@ -17,6 +19,8 @@ const db = openDb(DB_PATH);
 const broker = createBrokerAdapter();
 
 let liveMonitor: LiveMonitorService | null = null;
+const orderService = new OrderService(db, broker, () => loadSettings(db));
+orderService.on('event', broadcast);
 
 const app = express();
 app.use(cors());
@@ -62,6 +66,11 @@ app.post('/api/backtest', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+app.get('/api/orders', (req, res) => {
+  const limit = Number(req.query.limit ?? 200);
+  res.json(listOrders(db, limit));
 });
 
 app.get('/api/events', (req, res) => {
@@ -117,14 +126,52 @@ async function startLiveMonitorIfConfigured(): Promise<void> {
   }
   liveMonitor = new LiveMonitorService(db, broker, settings.selectedActiveIds);
   liveMonitor.on('event', broadcast);
+  liveMonitor.on('event', (event: AppEvent) => {
+    if (event.type !== 'PATTERN_CONFIRMED' || event.activeId === undefined) return;
+    const payload = event.payload as { window: unknown; wickPercentage11: number };
+    orderService
+      .handleConfirmed(event.activeId, payload.window as Parameters<OrderService['handleConfirmed']>[1], payload.wickPercentage11)
+      .catch((err) => console.error('[orders] erro ao processar PATTERN_CONFIRMED:', err));
+  });
   await liveMonitor.start();
   console.log(`[live] Monitor ao vivo iniciado para os ativos: ${settings.selectedActiveIds.join(', ')}`);
+}
+
+/**
+ * Reconciliacao de ordens UNKNOWN ao subir o servidor: para as que ja tem brokerOrderId
+ * (ou seja, a corretora chegou a confirmar o pedido antes da conexao cair), tenta buscar o
+ * resultado real. Ordens sem brokerOrderId (a chamada de rede falhou ANTES de qualquer
+ * confirmacao) ficam UNKNOWN permanentemente — nunca sao reenviadas.
+ */
+async function reconcileUnknownOrders(): Promise<void> {
+  const unknown = listUnknownOrders(db).filter((o) => o.brokerOrderId);
+  if (unknown.length === 0) return;
+  console.log(`[reconcile] ${unknown.length} ordem(ns) UNKNOWN com brokerOrderId — tentando reconciliar...`);
+  for (const order of unknown) {
+    try {
+      const resolution = await broker.getOrderResult(order.brokerOrderId!);
+      if (resolution) {
+        updateOrder(db, order.id, {
+          status: 'FILLED',
+          resolvedAt: Date.now(),
+          result: resolution.result,
+          pnl: resolution.pnl,
+          payoutPercentage: resolution.payoutPercentage,
+        });
+        console.log(`[reconcile] Ordem ${order.id} resolvida: ${resolution.result}`);
+      }
+    } catch (err) {
+      console.error(`[reconcile] Falha ao reconciliar ordem ${order.id}:`, err instanceof Error ? err.message : err);
+    }
+  }
 }
 
 httpServer.listen(PORT, () => {
   console.log(`[server] ouvindo em http://localhost:${PORT} (WS em /ws)`);
   console.log(`[server] BROKER_ADAPTER=${process.env.BROKER_ADAPTER ?? 'mock'}`);
-  startLiveMonitorIfConfigured().catch((err) => console.error('[live] erro inesperado ao iniciar:', err));
+  reconcileUnknownOrders()
+    .then(() => startLiveMonitorIfConfigured())
+    .catch((err) => console.error('[live] erro inesperado ao iniciar:', err));
 });
 
 process.on('SIGINT', async () => {

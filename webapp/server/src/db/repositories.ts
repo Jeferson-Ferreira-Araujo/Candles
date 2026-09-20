@@ -189,6 +189,21 @@ export function listUnknownOrders(db: Database.Database): OrderRecord[] {
   return rows.map(rowToOrder);
 }
 
+export function listOrders(db: Database.Database, limit = 200): OrderRecord[] {
+  const rows = db.prepare(`SELECT * FROM orders ORDER BY requested_at DESC LIMIT ?`).all(limit) as Array<Record<string, unknown>>;
+  return rows.map(rowToOrder);
+}
+
+/** True se existe alguma ordem para este ativo ainda sem resultado (aberta ou de status desconhecido). */
+export function hasPendingOrderForActive(db: Database.Database, activeId: number): boolean {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as n FROM orders WHERE active_id = ? AND status IN ('REQUESTED', 'CONFIRMED', 'UNKNOWN')`
+    )
+    .get(activeId) as { n: number };
+  return row.n > 0;
+}
+
 export function insertEvent(db: Database.Database, e: AppEvent): void {
   db.prepare(`INSERT INTO events (id, type, active_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)`).run(
     e.id,

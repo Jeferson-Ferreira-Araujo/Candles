@@ -1,4 +1,4 @@
-import type { BacktestSummary, DailyResult, PatternOccurrence, Settings } from '@polarium12c/shared';
+import type { BacktestSummary, DailyResult, OrderRecord, PatternOccurrence, Settings } from '@polarium12c/shared';
 
 interface Balance {
   id: string;
@@ -43,4 +43,6 @@ export const api = {
   getDailyResult: () => fetch(`${BASE}/api/daily-result`).then((r) => json<DailyResult>(r)),
 
   getBalances: () => fetch(`${BASE}/api/balances`).then((r) => json<Balance[]>(r)),
+
+  getOrders: (limit = 200) => fetch(`${BASE}/api/orders?limit=${limit}`).then((r) => json<OrderRecord[]>(r)),
 };
