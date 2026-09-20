@@ -1,0 +1,100 @@
+import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import type Database from 'better-sqlite3';
+import { CANDLE_SIZE_M1, type AppEvent, type Candle, type PatternProgress } from '@polarium12c/shared';
+import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
+import { TwelveCandlesEngine } from '../strategy/twelveCandlesEngine.js';
+import { insertEvent, saveCandle } from '../db/repositories.js';
+
+/**
+ * Liga um BrokerAdapter (real ou mock) ao StrategyEngine em tempo real: assina candles de
+ * cada ativo selecionado, alimenta o motor a cada fechamento, persiste candles/eventos, e
+ * emite eventos para quem quiser mostrar isso ao vivo (ex.: camada WebSocket).
+ *
+ * NAO envia nenhuma ordem — isso e responsabilidade de uma camada futura (SafetyGate +
+ * OrderService) que vai OUVIR o evento PATTERN_CONFIRMED emitido aqui, nunca do proprio
+ * monitor.
+ */
+export class LiveMonitorService extends EventEmitter {
+  private readonly engine = new TwelveCandlesEngine();
+  private unsubscribers: Array<() => void> = [];
+  private started = false;
+
+  constructor(
+    private readonly db: Database.Database,
+    private readonly broker: BrokerAdapter,
+    private readonly activeIds: number[],
+    private readonly candleSize: number = CANDLE_SIZE_M1
+  ) {
+    super();
+  }
+
+  async start(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
+
+    for (const activeId of this.activeIds) {
+      const unsubscribe = await this.broker.subscribeCandles(activeId, this.candleSize, (candle) => {
+        this.handleCandle(activeId, candle);
+      });
+      this.unsubscribers.push(unsubscribe);
+    }
+  }
+
+  stop(): void {
+    for (const unsub of this.unsubscribers) unsub();
+    this.unsubscribers = [];
+    this.started = false;
+  }
+
+  getProgress(activeId: number): PatternProgress {
+    return this.engine.getProgress(activeId);
+  }
+
+  private handleCandle(activeId: number, candle: Candle): void {
+    if (!candle.isClosed) {
+      // Candle ainda se formando: so serve para o preview em tempo real do pavio da 11a
+      // (quando aplicavel). Nunca alimenta o engine de confirmacao — "nunca confirmar
+      // usando candle ainda aberto".
+      const preview = this.engine.previewEleventh(activeId, candle);
+      if (preview) {
+        const progress = this.engine.getProgress(activeId);
+        this.emitEvent('PATTERN_PROGRESS', activeId, { progress: { ...progress, wick11: { ...preview, candleClosed: false } } });
+      }
+      return;
+    }
+
+    saveCandle(this.db, candle, 'live');
+    this.emitEvent('CANDLE_CLOSED', activeId, { candle });
+
+    const tick = this.engine.onCandleClosed(activeId, candle);
+
+    if (tick.kind === 'PROGRESS') {
+      this.emitEvent('PATTERN_PROGRESS', activeId, { progress: tick.progress });
+      return;
+    }
+
+    if (tick.kind === 'INVALIDATED') {
+      this.emitEvent('PATTERN_INVALIDATED', activeId, {
+        progress: tick.progress,
+        reason: tick.reason,
+        wickPercentage11: tick.wickPercentage11,
+        window: tick.window,
+      });
+      return;
+    }
+
+    // CONFIRMED — este e o unico ponto que uma futura camada de ordens deve escutar.
+    this.emitEvent('PATTERN_CONFIRMED', activeId, {
+      progress: tick.progress,
+      window: tick.window,
+      wickPercentage11: tick.wickPercentage11,
+    });
+  }
+
+  private emitEvent(type: AppEvent['type'], activeId: number, payload: Record<string, unknown>): void {
+    const event: AppEvent = { id: randomUUID(), type, activeId, payload, createdAt: Date.now() };
+    insertEvent(this.db, event);
+    this.emit('event', event);
+  }
+}

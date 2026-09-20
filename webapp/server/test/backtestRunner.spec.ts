@@ -1,0 +1,95 @@
+import { describe, expect, it } from 'vitest';
+import type { Candle } from '@polarium12c/shared';
+import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import { openDb } from '../src/db/db.js';
+import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
+import { runBacktest } from '../src/backtest/backtestRunner.js';
+import { listBacktestOccurrences } from '../src/db/repositories.js';
+
+const SIZE = 60;
+
+function green(activeId: number, from: number): Candle {
+  return { activeId, size: SIZE, from, to: from + SIZE, open: 1, close: 2, high: 2, low: 1, isClosed: true };
+}
+function red(activeId: number, from: number): Candle {
+  return { activeId, size: SIZE, from, to: from + SIZE, open: 2, close: 1, high: 2, low: 1, isClosed: true };
+}
+function redWithWick(activeId: number, from: number, wickFraction: number): Candle {
+  return { activeId, size: SIZE, from, to: from + SIZE, open: 100, close: wickFraction * 100, high: 100, low: 0, isClosed: true };
+}
+
+/** Constroi N ocorrencias consecutivas e nao sobrepostas do padrao completo (13 velas cada: 12 + resultado). */
+function buildOccurrences(activeId: number, baseFrom: number, count: number, resultDirectionUp: boolean): Candle[] {
+  const candles: Candle[] = [];
+  let from = baseFrom;
+  for (let n = 0; n < count; n++) {
+    for (let i = 0; i < TWELVE_CANDLES_PATTERN.length; i++) {
+      const color = TWELVE_CANDLES_PATTERN[i];
+      candles.push(i === 10 ? redWithWick(activeId, from, 0.5) : color === 'G' ? green(activeId, from) : red(activeId, from));
+      from += SIZE;
+    }
+    // 13a vela (resultado do CALL) + 1 candle "separador" neutro para nao encostar na proxima ocorrencia
+    candles.push(resultDirectionUp ? green(activeId, from) : red(activeId, from));
+    from += SIZE;
+  }
+  return candles;
+}
+
+describe('runBacktest', () => {
+  it('detecta multiplas ocorrencias, calcula WIN/LOSS pela 13a vela, e separa "todas" de "primeira do dia"', async () => {
+    const db = openDb(':memory:');
+    const broker = new MockBrokerAdapter();
+    await broker.authenticate();
+
+    // Precisa cair dentro da janela real de `days` (30) a partir de agora, ja que
+    // runBacktest usa Date.now() internamente — nao um dia fixo no passado.
+    const dayStart = Math.floor(Date.now() / 1000) - 6 * 60 * 60;
+    const activeId = 81;
+
+    // 2 ocorrencias no mesmo "dia logico" do teste (nao precisa ser exatamente 1 dia UTC
+    // real aqui, so precisamos de >=2 ocorrencias no total para testar a separacao).
+    const candles = buildOccurrences(activeId, dayStart, 2, true);
+    broker.seedCandles(activeId, candles);
+
+    const { occurrences, summary } = await runBacktest(db, broker, [activeId], 30);
+
+    expect(occurrences).toHaveLength(2);
+    expect(occurrences.every((o) => o.result === 'WIN')).toBe(true);
+    expect(occurrences.filter((o) => o.isFirstOfDay)).toHaveLength(1);
+    expect(occurrences[0]!.isFirstOfDay).toBe(true);
+    expect(occurrences[1]!.isFirstOfDay).toBe(false);
+
+    expect(summary.allOccurrences).toEqual({ wins: 2, losses: 0, dojis: 0 });
+    expect(summary.firstOfDayOnly).toEqual({ wins: 1, losses: 0, dojis: 0 });
+
+    // As ocorrencias devem ter sido persistidas de verdade no banco (nao so em memoria).
+    const persisted = listBacktestOccurrences(db, summary.runId);
+    expect(persisted).toHaveLength(2);
+    expect(persisted.map((o) => o.result)).toEqual(['WIN', 'WIN']);
+  });
+
+  it('marca LOSS quando a 13a vela fecha abaixo da abertura', async () => {
+    const db = openDb(':memory:');
+    const broker = new MockBrokerAdapter();
+    await broker.authenticate();
+    const activeId = 76;
+    const candles = buildOccurrences(activeId, Math.floor(Date.now() / 1000) - 6 * 60 * 60, 1, false);
+    broker.seedCandles(activeId, candles);
+
+    const { occurrences } = await runBacktest(db, broker, [activeId], 30);
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]!.result).toBe('LOSS');
+  });
+
+  it('perDay inclui dias sem nenhum sinal (bucket NONE) para todo o periodo pedido', async () => {
+    const db = openDb(':memory:');
+    const broker = new MockBrokerAdapter();
+    await broker.authenticate();
+    const activeId = 2298;
+    broker.seedCandles(activeId, []); // nenhum candle historico -> nenhuma ocorrencia
+
+    const { summary } = await runBacktest(db, broker, [activeId], 3);
+    expect(summary.perDay.length).toBeGreaterThanOrEqual(3);
+    expect(summary.perDay.every((d) => d.bucket === 'NONE' && d.total === 0)).toBe(true);
+  });
+});
