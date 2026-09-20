@@ -16,6 +16,11 @@ interface OutletCtx {
 }
 
 const DEFAULT_ANALYSIS_DAYS = 7;
+// Ativos sao consultados alguns por vez (nao um a um, nao todos de uma vez): sequencial pura
+// levava minutos com dezenas de ativos OTC digital (cada um e uma chamada de rede real a
+// corretora + gravacao no banco); paralelismo total demais arrisca sobrecarregar a mesma
+// conexao WS compartilhada com a Polarium.
+const ANALYSIS_CONCURRENCY = 6;
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -70,11 +75,11 @@ export function MonitorPage() {
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   }
 
-  // Sob demanda (botao), nao mais automatico no login. Roda o backtest UM ATIVO POR VEZ
-  // (em vez de uma unica chamada com todos os ids) especificamente para poder mostrar uma
-  // barra de progresso real — cada resposta que chega e um incremento visivel, nao uma
-  // espera indeterminada. Erro em um ativo isolado (ex.: ativo invalido) nao aborta os
-  // demais, so e contado e ignorado no resultado final.
+  // Sob demanda (botao), nao mais automatico no login. Roda o backtest de varios ativos ao
+  // mesmo tempo (pool de ANALYSIS_CONCURRENCY workers), nao um por um nem todos de uma vez —
+  // sequencial puro levava minutos com dezenas/centenas de ativos OTC digital (cada um e uma
+  // chamada de rede real a corretora + gravacao no banco). Erro em um ativo isolado (ex.:
+  // ativo invalido) nao aborta os demais, so e contado e ignorado no resultado final.
   async function runAutoAnalysis() {
     const days = settings?.analysisDays ?? DEFAULT_ANALYSIS_DAYS;
     const allAssets = await api.getAssets().catch(() => [] as AssetInfo[]);
@@ -97,6 +102,7 @@ export function MonitorPage() {
     const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
     const perAsset: Record<number, AssetTally> = {};
     let failedCount = 0;
+    let completed = 0;
     // Gale 1 e sempre calculado (nao depende de nenhuma configuracao) para comparar direto
     // com "so 1a entrada" (overall/perAsset acima).
     const reentry = {
@@ -106,36 +112,43 @@ export function MonitorPage() {
       missingCandle14: 0,
     };
 
-    for (let i = 0; i < allAssets.length; i++) {
-      const asset = allAssets[i]!;
-      setAutoAnalysis({
-        status: 'loading',
-        completed: i,
-        total: allAssets.length,
-        currentAssetName: asset.name,
-        elapsedMs: Date.now() - startedAt,
-        days,
-      });
-      try {
-        const { summary } = await api.runBacktest([asset.id], days);
-        const t = summary.perAsset[asset.id] ?? summary.allOccurrences;
-        perAsset[asset.id] = t;
-        overall.wins += t.wins;
-        overall.losses += t.losses;
-        overall.dojis += t.dojis;
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < allAssets.length) {
+        const asset = allAssets[nextIndex++]!;
+        try {
+          const { summary } = await api.runBacktest([asset.id], days);
+          const t = summary.perAsset[asset.id] ?? summary.allOccurrences;
+          perAsset[asset.id] = t;
+          overall.wins += t.wins;
+          overall.losses += t.losses;
+          overall.dojis += t.dojis;
 
-        reentry.combinedSameDirection.wins += summary.reentry.combinedSameDirection.wins;
-        reentry.combinedSameDirection.losses += summary.reentry.combinedSameDirection.losses;
-        reentry.combinedSameDirection.dojis += summary.reentry.combinedSameDirection.dojis;
-        reentry.combinedOppositeDirection.wins += summary.reentry.combinedOppositeDirection.wins;
-        reentry.combinedOppositeDirection.losses += summary.reentry.combinedOppositeDirection.losses;
-        reentry.combinedOppositeDirection.dojis += summary.reentry.combinedOppositeDirection.dojis;
-        reentry.consideredLosses += summary.reentry.consideredLosses;
-        reentry.missingCandle14 += summary.reentry.missingCandle14;
-      } catch {
-        failedCount++;
+          reentry.combinedSameDirection.wins += summary.reentry.combinedSameDirection.wins;
+          reentry.combinedSameDirection.losses += summary.reentry.combinedSameDirection.losses;
+          reentry.combinedSameDirection.dojis += summary.reentry.combinedSameDirection.dojis;
+          reentry.combinedOppositeDirection.wins += summary.reentry.combinedOppositeDirection.wins;
+          reentry.combinedOppositeDirection.losses += summary.reentry.combinedOppositeDirection.losses;
+          reentry.combinedOppositeDirection.dojis += summary.reentry.combinedOppositeDirection.dojis;
+          reentry.consideredLosses += summary.reentry.consideredLosses;
+          reentry.missingCandle14 += summary.reentry.missingCandle14;
+        } catch {
+          failedCount++;
+        }
+        completed++;
+        setAutoAnalysis({
+          status: 'loading',
+          completed,
+          total: allAssets.length,
+          currentAssetName: asset.name,
+          elapsedMs: Date.now() - startedAt,
+          days,
+        });
       }
     }
+
+    const workerCount = Math.min(ANALYSIS_CONCURRENCY, allAssets.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
     setAutoAnalysis({
       status: 'done',
