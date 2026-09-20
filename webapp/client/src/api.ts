@@ -43,13 +43,21 @@ function req(path: string, init?: RequestInit) {
   return fetchWithRetry(`${BASE}${path}`, { credentials: 'include', ...init });
 }
 
+// Login nunca deve ser reenviado automaticamente: se a resposta da 1a tentativa se perder na
+// rede mas o servidor ja tiver processado, um reenvio dispara um SEGUNDO login real (nova
+// sessao na Polarium substituindo a anterior) quase ao mesmo tempo — corrida que o servidor
+// so recentemente passou a tolerar sem cair. Aqui o usuario ve o erro e decide se tenta de novo.
+function reqNoRetry(path: string, init?: RequestInit) {
+  return fetch(`${BASE}${path}`, { credentials: 'include', ...init });
+}
+
 export const api = {
   health: () => req('/api/health').then((r) => json<{ ok: boolean; mode: string; brokerAdapter: string }>(r)),
 
   authStatus: () => req('/api/auth/status').then((r) => json<AuthStatus>(r)),
 
   login: (ssid: string) =>
-    req('/api/auth/login', {
+    reqNoRetry('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ssid }),

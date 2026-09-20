@@ -281,6 +281,19 @@ async function reconcileUnknownOrders(): Promise<void> {
   }
 }
 
+// Rede de seguranca de ultima instancia: a SDK da Polarium as vezes rejeita promises
+// internamente em metodos que ela mesma tipa como sincronos/void (ja confirmado no caso de
+// unsubscribeOnLastCandleChanged() ao desconectar), entao um catch/try local nem sempre
+// alcanca a origem real do erro. Sem isto, essas rejeicoes derrubam o processo inteiro
+// (Node trata unhandledRejection como fatal por padrao) mesmo quando nao ha nenhuma ordem
+// ou operacao em risco — so registramos e seguimos rodando.
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] unhandledRejection (processo continua rodando):', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[server] uncaughtException (processo continua rodando):', err);
+});
+
 httpServer.listen(PORT, () => {
   console.log(`[server] ouvindo em http://localhost:${PORT} (WS em /ws)`);
   console.log(`[server] BROKER_ADAPTER=${brokerManager.requiresLogin ? 'polarium' : 'mock'}`);

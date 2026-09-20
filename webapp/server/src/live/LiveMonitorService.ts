@@ -49,7 +49,23 @@ export class LiveMonitorService extends EventEmitter {
   }
 
   stop(): void {
-    for (const unsub of this.unsubscribers) unsub();
+    // unsub() e tipado como sincrono (void), mas na pratica pode devolver uma Promise que
+    // rejeita quando o WebSocket da corretora ja esta fechando (ex.: login novo substituindo
+    // a sessao anterior). Sem este try/catch + tratamento de rejeicao, essa excecao nao tem
+    // dono e derruba o processo inteiro (unhandled rejection) — cancelar a inscricao aqui e
+    // so um "best effort" de limpeza, nunca deve poder crashar o servidor.
+    for (const unsub of this.unsubscribers) {
+      try {
+        const maybePromise = unsub() as unknown;
+        if (maybePromise && typeof (maybePromise as Promise<unknown>).catch === 'function') {
+          (maybePromise as Promise<unknown>).catch((err) =>
+            console.error('[live] falha ao cancelar inscricao de candles (ignorada):', err)
+          );
+        }
+      } catch (err) {
+        console.error('[live] falha ao cancelar inscricao de candles (ignorada):', err);
+      }
+    }
     this.unsubscribers = [];
     this.started = false;
   }

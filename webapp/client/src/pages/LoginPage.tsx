@@ -18,7 +18,17 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
       onLoggedIn();
       navigate('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // TypeError "Failed to fetch" e falha de rede (ex.: servidor Render ainda acordando de
+      // hibernacao) — nao um erro de credencial. Login nunca e reenviado automaticamente
+      // (ver reqNoRetry em api.ts), entao aqui so orientamos o usuario a tentar de novo.
+      const isNetworkFailure = err instanceof TypeError;
+      setError(
+        isNetworkFailure
+          ? 'Não foi possível conectar ao servidor. Se ele estava inativo, aguarde ~30s e tente novamente.'
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      );
     } finally {
       setLoading(false);
     }
