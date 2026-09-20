@@ -29,6 +29,25 @@ function computeResult(candle13: Candle): TradeResult {
   return 'DOJI';
 }
 
+/** Mesmo criterio de computeResult, mas para uma entrada PUT: ganha quando o candle fecha ABAIXO da abertura. */
+function computeResultForPut(candle: Candle): TradeResult {
+  if (candle.close < candle.open) return 'WIN';
+  if (candle.close > candle.open) return 'LOSS';
+  return 'DOJI';
+}
+
+function tallyResults(results: TradeResult[]): { wins: number; losses: number; dojis: number } {
+  let wins = 0;
+  let losses = 0;
+  let dojis = 0;
+  for (const r of results) {
+    if (r === 'WIN') wins++;
+    else if (r === 'LOSS') losses++;
+    else dojis++;
+  }
+  return { wins, losses, dojis };
+}
+
 function tally(occs: PatternOccurrence[]): { wins: number; losses: number; dojis: number } {
   let wins = 0;
   let losses = 0;
@@ -93,12 +112,22 @@ function buildSummary(
     perAsset[activeId] = tally(occurrences.filter((o) => o.activeId === activeId));
   }
 
+  const lossOccurrences = occurrences.filter((o) => o.result === 'LOSS');
+  const lossesWithCandle14 = lossOccurrences.filter((o) => o.candle14);
+  const reentry: BacktestSummary['reentry'] = {
+    sameDirection: tallyResults(lossesWithCandle14.map((o) => computeResult(o.candle14!))),
+    oppositeDirection: tallyResults(lossesWithCandle14.map((o) => computeResultForPut(o.candle14!))),
+    consideredLosses: lossOccurrences.length,
+    missingCandle14: lossOccurrences.length - lossesWithCandle14.length,
+  };
+
   return {
     runId,
     allOccurrences: tally(occurrences),
     firstOfDayOnly: tally(occurrences.filter((o) => o.isFirstOfDay)),
     perDay,
     perAsset,
+    reentry,
   };
 }
 
@@ -137,6 +166,7 @@ export async function runBacktest(
 
       if (tick.kind === 'CONFIRMED') {
         const candle13 = candles[i + 1]; // pode ser undefined se for o ultimo candle do periodo
+        const candle14 = candles[i + 2]; // idem — so usado para simular reentrada, nunca para o resultado principal
         allOccurrences.push({
           // Prefixado com o id da propria rodada do backtest: sem isso, rodar o MESMO
           // backtest (mesmo ativo/periodo) duas vezes gerava o mesmo id de novo (baseado
@@ -147,6 +177,7 @@ export async function runBacktest(
           candles: tick.window,
           wickPercentage11: tick.wickPercentage11,
           candle13,
+          candle14,
           result: candle13 ? computeResult(candle13) : undefined,
           isFirstOfDay: false, // marcado abaixo, apos ordenar globalmente
         });

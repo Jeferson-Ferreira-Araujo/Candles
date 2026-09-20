@@ -85,6 +85,8 @@ export interface PatternOccurrence {
   wickPercentage11: number;
   candle13?: Candle; // pode ser ausente em backtest se nao houver dado suficiente
   result?: TradeResult;
+  /** Candle seguinte ao candle13 — usado so para simular reentrada (CALL/PUT), nunca para o resultado principal. */
+  candle14?: Candle;
   isFirstOfDay: boolean;
 }
 
@@ -145,6 +147,14 @@ export interface Settings {
   robotActive: boolean;
   /** Quantidade de dias que a analise consolidada por ativo (botao no Monitor) olha para tras. */
   analysisDays: number;
+  /**
+   * So afeta a analise consolidada do Monitor (nao o robo ao vivo, que nao implementa
+   * reentrada — ver galeEnabled acima, que e outro campo, ainda nao ligado a nada).
+   * Quando ativo, para cada ocorrencia cujo entrada original (candle13, sempre CALL) deu
+   * LOSS, a analise tambem simula uma reentrada no candle seguinte (candle14): uma vez
+   * repetindo a mesma direcao (CALL) e outra na direcao contraria (PUT), e reporta os dois.
+   */
+  analysisReentryEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -158,6 +168,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'OBSERVATION',
   robotActive: false,
   analysisDays: 7,
+  analysisReentryEnabled: false,
 };
 
 export interface DailyResult {
@@ -223,6 +234,18 @@ export interface BacktestSummary {
   perDay: BacktestDaySummary[];
   /** Consolidado por ativo (todas as ocorrencias, nao so a 1a do dia) — para ranquear os melhores ativos. */
   perAsset: Record<number, { wins: number; losses: number; dojis: number }>;
+  /**
+   * Simulacao de reentrada: para cada ocorrencia cuja entrada original (candle13, sempre
+   * CALL) deu LOSS, calcula o resultado hipotetico de uma segunda entrada no candle
+   * seguinte (candle14) — uma vez repetindo CALL, outra vez invertendo para PUT. Sempre
+   * calculado (custa pouco); o cliente decide se mostra, com base em Settings.analysisReentryEnabled.
+   */
+  reentry: {
+    sameDirection: { wins: number; losses: number; dojis: number }; // reentrada em CALL de novo
+    oppositeDirection: { wins: number; losses: number; dojis: number }; // reentrada em PUT
+    consideredLosses: number; // total de ocorrencias LOSS na janela (denominador de contexto)
+    missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo)
+  };
 }
 
 /** Payload da conexao/broker exibido no cabecalho da aplicacao. */

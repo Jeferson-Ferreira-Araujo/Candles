@@ -104,6 +104,27 @@ describe('runBacktest', () => {
     expect(occurrences[0]!.result).toBe('LOSS');
   });
 
+  it('simula reentrada na vela seguinte a um LOSS: mesma direcao (CALL) e direcao contraria (PUT)', async () => {
+    const broker = new MockBrokerAdapter();
+    await broker.authenticate();
+    const activeId = 76;
+    const dayStart = safeDayStart();
+
+    // 12 velas do padrao + candle13 (LOSS, fecha abaixo da abertura) + candle14 controlada.
+    const candles = buildOccurrences(activeId, dayStart, 1, false);
+    const candle14From = candles[candles.length - 1]!.to;
+    candles.push(green(activeId, candle14From)); // fecha ACIMA da abertura
+    broker.seedCandles(activeId, candles);
+
+    const { summary } = await runBacktest(db, broker, [activeId], 30);
+
+    expect(summary.reentry.consideredLosses).toBe(1);
+    expect(summary.reentry.missingCandle14).toBe(0);
+    // candle14 fechou em alta: reentrada CALL (mesma direcao) ganha, PUT (contraria) perde.
+    expect(summary.reentry.sameDirection).toEqual({ wins: 1, losses: 0, dojis: 0 });
+    expect(summary.reentry.oppositeDirection).toEqual({ wins: 0, losses: 1, dojis: 0 });
+  });
+
   it('perDay inclui dias sem nenhum sinal (bucket NONE) para todo o periodo pedido', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();

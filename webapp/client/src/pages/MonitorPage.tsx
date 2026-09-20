@@ -94,6 +94,13 @@ export function MonitorPage() {
     const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
     const perAsset: Record<number, AssetTally> = {};
     let failedCount = 0;
+    const reentryEnabled = settings?.analysisReentryEnabled ?? false;
+    const reentry = {
+      sameDirection: { wins: 0, losses: 0, dojis: 0 } as AssetTally,
+      oppositeDirection: { wins: 0, losses: 0, dojis: 0 } as AssetTally,
+      consideredLosses: 0,
+      missingCandle14: 0,
+    };
 
     for (let i = 0; i < allAssets.length; i++) {
       const asset = allAssets[i]!;
@@ -112,12 +119,32 @@ export function MonitorPage() {
         overall.wins += t.wins;
         overall.losses += t.losses;
         overall.dojis += t.dojis;
+
+        if (reentryEnabled) {
+          reentry.sameDirection.wins += summary.reentry.sameDirection.wins;
+          reentry.sameDirection.losses += summary.reentry.sameDirection.losses;
+          reentry.sameDirection.dojis += summary.reentry.sameDirection.dojis;
+          reentry.oppositeDirection.wins += summary.reentry.oppositeDirection.wins;
+          reentry.oppositeDirection.losses += summary.reentry.oppositeDirection.losses;
+          reentry.oppositeDirection.dojis += summary.reentry.oppositeDirection.dojis;
+          reentry.consideredLosses += summary.reentry.consideredLosses;
+          reentry.missingCandle14 += summary.reentry.missingCandle14;
+        }
       } catch {
         failedCount++;
       }
     }
 
-    setAutoAnalysis({ status: 'done', overall, perAsset, assets: allAssets, failedCount, elapsedMs: Date.now() - startedAt, days });
+    setAutoAnalysis({
+      status: 'done',
+      overall,
+      perAsset,
+      assets: allAssets,
+      failedCount,
+      elapsedMs: Date.now() - startedAt,
+      days,
+      reentry: reentryEnabled ? reentry : null,
+    });
   }
 
   return (
