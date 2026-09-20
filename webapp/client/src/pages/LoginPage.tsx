@@ -56,6 +56,12 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
 
+          {loading && (
+            <p className="text-xs text-slate-500 text-center">
+              Se o servidor estiver hibernado por inatividade, isso pode levar até 1 minuto na primeira tentativa.
+            </p>
+          )}
+
           <p className="text-xs text-slate-500">
             O SSID é a sua sessão já autenticada na Polarium (não a sua senha). Nunca compartilhe esse valor — ele
             fica salvo apenas na memória deste servidor, nunca em disco ou em log.

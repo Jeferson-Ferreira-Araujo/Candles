@@ -24,8 +24,23 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// O backend (Render, plano free) hiberna apos ociosidade e a primeira requisicao que o
+// acorda as vezes falha na propria camada de rede (conexao recusada), nao so fica lenta.
+// So tentamos de novo em falha de rede (TypeError do fetch) — uma resposta HTTP de verdade
+// (401, 500, etc.) e um erro real da aplicacao e nunca deve ser reprocessada.
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3, delayMs = 1500): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      if (attempt >= attempts) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+}
+
 function req(path: string, init?: RequestInit) {
-  return fetch(`${BASE}${path}`, { credentials: 'include', ...init });
+  return fetchWithRetry(`${BASE}${path}`, { credentials: 'include', ...init });
 }
 
 export const api = {
