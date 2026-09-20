@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import type { AppEvent } from '@polarium12c/shared';
 import { openDb } from './db/db.js';
-import { loadSettings, saveSettings, listEvents } from './db/repositories.js';
+import { loadSettings, saveSettings, listEvents, getDailyResult, insertEvent } from './db/repositories.js';
 import { createBrokerAdapter } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
@@ -40,7 +41,11 @@ app.put('/api/settings', (req, res) => {
     res.status(400).json({ error: 'galeMaxLevels maximo e 1.' });
     return;
   }
+  if (current.robotActive && !next.robotActive) {
+    insertEvent(db, { id: randomUUID(), type: 'KILL_SWITCH', payload: { source: 'user' }, createdAt: Date.now() });
+  }
   saveSettings(db, next);
+  broadcastRaw('SETTINGS_UPDATED', next);
   res.json(next);
 });
 
@@ -64,6 +69,21 @@ app.get('/api/events', (req, res) => {
   res.json(listEvents(db, limit));
 });
 
+app.get('/api/daily-result', (_req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  res.json(getDailyResult(db, today));
+});
+
+app.get('/api/balances', async (_req, res) => {
+  try {
+    await broker.authenticate();
+    const balances = await broker.getBalances();
+    res.json(balances);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
@@ -71,11 +91,15 @@ wss.on('connection', (socket) => {
   socket.send(JSON.stringify({ type: 'HELLO', payload: { message: 'Conectado ao servidor 12 Candles.' } }));
 });
 
-function broadcast(event: AppEvent): void {
-  const message = JSON.stringify({ type: 'APP_EVENT', payload: event });
+function broadcastRaw(type: string, payload: unknown): void {
+  const message = JSON.stringify({ type, payload });
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) client.send(message);
   }
+}
+
+function broadcast(event: AppEvent): void {
+  broadcastRaw('APP_EVENT', event);
 }
 
 async function startLiveMonitorIfConfigured(): Promise<void> {

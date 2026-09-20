@@ -13,7 +13,7 @@ estruturalmente a corretora no agregado. A interface deve sempre comunicar isso 
 ## Stack
 
 - Backend: Node.js + TypeScript, Express (REST) + `ws` (WebSocket), SQLite (`better-sqlite3`), Vitest.
-- Frontend: React + TypeScript + Vite + Tailwind (ainda nao implementado — proxima etapa).
+- Frontend: React + TypeScript + Vite + Tailwind.
 - Pacote compartilhado (`shared/`): tipos de dominio e a regra "12 Candles" congelada.
 
 ## Estrutura (monorepo com npm workspaces)
@@ -22,10 +22,12 @@ estruturalmente a corretora no agregado. A interface deve sempre comunicar isso 
 webapp/
   shared/   tipos + regra 12 Candles (sem logica de servidor)
   server/   API + WebSocket + banco + StrategyEngine + BrokerAdapter
-  client/   frontend (proxima etapa)
+  client/   frontend (Vite + React + Tailwind)
 ```
 
 ## Instalar e rodar
+
+Backend (porta 4000):
 
 ```bash
 npm install
@@ -33,11 +35,17 @@ npm run dev
 ```
 
 Isso sobe o servidor (`server/src/index.ts`) em `http://localhost:4000`, com endpoints
-`/api/health`, `/api/settings` (GET/PUT), `/api/backtest` (POST) e `/api/events`, alem de
-WebSocket em `/ws` (transmite os eventos do monitor ao vivo). O banco SQLite e criado
-automaticamente em `server/data/app.db` na primeira execucao. Sem nenhuma configuracao
-extra, usa `MockBrokerAdapter` (sem rede) — para rodar contra a Polarium de verdade, ver
-`.env.example`.
+`/api/health`, `/api/settings` (GET/PUT), `/api/backtest` (POST), `/api/events`,
+`/api/daily-result` e `/api/balances`, alem de WebSocket em `/ws` (transmite os eventos do
+monitor ao vivo). O banco SQLite e criado automaticamente em `server/data/app.db` na
+primeira execucao. Sem nenhuma configuracao extra, usa `MockBrokerAdapter` (sem rede) —
+para rodar contra a Polarium de verdade, ver `.env.example`.
+
+Frontend (porta 5173, em outro terminal — proxy `/api` e `/ws` ja apontam para o backend):
+
+```bash
+npm run dev:client
+```
 
 Copie `server/.env.example` para `server/.env` e ajuste conforme necessario
 (`POLARIUM_SSID` **nunca** deve ser commitado).
@@ -85,13 +93,22 @@ npm test
    - Escolhida via `BROKER_ADAPTER=mock|polarium` (`.env`) atraves de `brokerFactory.ts` —
      padrao `mock`, nunca conecta em nada real sem configuracao explicita.
 
-## O que ainda falta (proximas etapas, na ordem combinada)
-
-5. Frontend (Vite + React + Tailwind): paginas Monitor, Validacao 30D, Operacoes, Logs, Configuracoes.
-6. Mini-candles reais (corpo + pavio) no Monitor ao vivo, consumindo o WebSocket ja existente.
-7. Integracao Polarium somente leitura validada em producao (candles ao vivo reais).
-8. Modo DEMO: SafetyGate (checklist de seguranca) + OrderService ligando PATTERN_CONFIRMED a `placeOrder`, na conta de pratica da Polarium.
-9. Modo REAL — permanece bloqueado.
+5. **Frontend** (`client/`) — 5 paginas com React Router (Monitor, Validacao 30D,
+   Operacoes, Configuracoes, Logs), layout com cabecalho (conexao/modo/robô/saldo/
+   resultado do dia/operacoes hoje + botao "Parar robô", que persiste um kill switch em
+   `Settings.robotActive` e registra `KILL_SWITCH`), sidebar de navegacao, cards de padrao
+   por ativo com mini-candles SVG reais (corpo + pavio, nao so circulos) mostrando as velas
+   ja casadas e slots vazios pontilhados para as que faltam, barra de progresso do pavio da
+   11a em tempo real, feed de eventos via WebSocket, formulario de configuracoes completo
+   (entrada minima R$5, gale no maximo 1 nivel, stops diarios, ativos monitorados) e a
+   pagina de backtest com a tabela dia-a-dia por ativo. Layout visual usado como base:
+   captura de tela fornecida pelo usuario (dark theme, cards de estado MONITORANDO/
+   ACOMPANHANDO/ATENCAO/PRE-SINAL/CONFIRMADO). Nenhum numero e fixo/mockado — tudo vem de
+   `/api/*` e do WebSocket; estados vazios aparecem honestamente como "—"/"nenhum ainda".
+6. Integracao Polarium somente leitura validada em producao (candles ao vivo reais).
+7. Modo DEMO: SafetyGate (checklist de seguranca) + OrderService ligando PATTERN_CONFIRMED a `placeOrder`, na conta de pratica da Polarium. A pagina Operacoes ja existe mas ainda mostra um aviso honesto de que isso nao foi implementado.
+8. Modo REAL — permanece bloqueado (a UI ja desabilita a opcao).
+9. Reiniciar o monitor ao vivo automaticamente quando `selectedActiveIds` mudar nas configuracoes sem precisar reiniciar o servidor (hoje isso so e lido na subida do processo).
 
 ## Seguranca (recapitulando o que ja esta implementado ou reservado no design)
 

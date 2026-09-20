@@ -127,6 +127,12 @@ export interface Settings {
   maxOperationsPerDay: number | null;
   selectedActiveIds: number[];
   mode: AppMode;
+  /**
+   * Kill switch persistido. Enquanto nao existir um OrderService real, isto so controla a
+   * UI e o log de eventos (KILL_SWITCH) — mas qualquer futura logica de envio de ordem
+   * DEVE checar este campo antes de operar (regra: na duvida, nao operar).
+   */
+  robotActive: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -138,6 +144,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxOperationsPerDay: null,
   selectedActiveIds: [],
   mode: 'OBSERVATION',
+  robotActive: false,
 };
 
 export interface DailyResult {
