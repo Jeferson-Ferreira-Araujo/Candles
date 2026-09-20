@@ -42,23 +42,17 @@ export type TradeResult = 'WIN' | 'LOSS' | 'DOJI';
 export type AppMode = 'OBSERVATION' | 'DEMO' | 'REAL';
 
 /**
- * Estado de exibicao do card de monitor, derivado do tamanho do prefixo casado (0-12).
- * Ver STRATEGY_12_CANDLES_PATTERN em strategy/twelveCandles para a sequencia completa.
+ * Estado de exibicao do card de monitor, derivado do tamanho do prefixo casado, relativo ao
+ * tamanho da regra atual (PATTERN_LENGTH). A funcao patternDisplayState() mora em
+ * strategyRule.ts (nao aqui) porque precisa de PATTERN_LENGTH/WICK_ELEVENTH_INDEX, que sao
+ * definidos la — evita import circular (strategyRule.ts ja importa CandleColor daqui).
  */
 export type PatternDisplayState =
-  | 'MONITORANDO' // 0-8
-  | 'ACOMPANHANDO' // 9
-  | 'ATENCAO' // 10
-  | 'PRE_SINAL' // 11
-  | 'CONFIRMADO'; // 12
-
-export function patternDisplayState(matchedLength: number): PatternDisplayState {
-  if (matchedLength >= 12) return 'CONFIRMADO';
-  if (matchedLength === 11) return 'PRE_SINAL';
-  if (matchedLength === 10) return 'ATENCAO';
-  if (matchedLength === 9) return 'ACOMPANHANDO';
-  return 'MONITORANDO';
-}
+  | 'MONITORANDO'
+  | 'ACOMPANHANDO'
+  | 'ATENCAO'
+  | 'PRE_SINAL'
+  | 'CONFIRMADO';
 
 /** Progresso ao vivo do padrao 12 Candles para um ativo. */
 export interface PatternProgress {

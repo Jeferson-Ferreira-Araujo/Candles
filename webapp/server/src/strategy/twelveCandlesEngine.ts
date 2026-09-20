@@ -5,29 +5,34 @@ import {
   TWELVE_CANDLES_PATTERN,
   WICK_11_MIN_PERCENTAGE,
   WICK_ELEVENTH_INDEX,
+  WICK_RULE_APPLIES,
   lowerWickPercentage,
   type Candle,
   type CandleColor,
   type PatternProgress,
 } from '@polarium12c/shared';
 
+/** Sentinela quando WICK_RULE_APPLIES=false: nao ha vela na posicao do pavio pra medir nesse tamanho de regra. */
+const WICK_NOT_APPLICABLE = 1;
+
 /**
  * Motor da estrategia "12 Candles". Regra CONGELADA — nao alterar, nao otimizar.
  *
- * Algoritmo: mantem, por ativo, um buffer com os ultimos ate PATTERN_LENGTH (hoje 13)
- * candles M1 FECHADOS e CONSECUTIVOS (qualquer gap zera o buffer para conter so o candle
- * novo). A cada candle fechado, recalcula do zero o maior L tal que as ULTIMAS L cores do
- * buffer sejam iguais as PRIMEIRAS L posicoes da regra (TWELVE_CANDLES_PATTERN.slice(0, L)).
- * Isso implementa exatamente "procure o maior prefixo da regra que ainda corresponda ao
- * final das velas recebidas" — e, por recalcular do zero a cada tick sobre uma janela
- * deslizante, suporta padroes sobrepostos sem nenhuma logica extra de "continuar apos
- * confirmar". A ultima posicao da regra (hoje a 13a, sempre G) e so mais uma posicao do
- * array — nenhuma logica dedicada precisou mudar quando a regra passou de 12 para 13 velas.
+ * Algoritmo: mantem, por ativo, um buffer com os ultimos ate PATTERN_LENGTH candles M1
+ * FECHADOS e CONSECUTIVOS (qualquer gap zera o buffer para conter so o candle novo). A cada
+ * candle fechado, recalcula do zero o maior L tal que as ULTIMAS L cores do buffer sejam
+ * iguais as PRIMEIRAS L posicoes da regra (TWELVE_CANDLES_PATTERN.slice(0, L)). Isso
+ * implementa exatamente "procure o maior prefixo da regra que ainda corresponda ao final das
+ * velas recebidas" — e, por recalcular do zero a cada tick sobre uma janela deslizante,
+ * suporta padroes sobrepostos sem nenhuma logica extra de "continuar apos confirmar". Isso
+ * generaliza automaticamente para qualquer PATTERN_LENGTH — a regra ja mudou de tamanho
+ * varias vezes sem precisar tocar nesse algoritmo.
  *
- * A regra do pavio da 11a vela e verificada SOMENTE no momento em que L chega a
- * PATTERN_LENGTH (a unica vela cuja posicao 11 e definida por essa janela especifica) —
+ * A regra do pavio da 11a vela SO existe quando WICK_RULE_APPLIES (regra longa o bastante
+ * para conter essa posicao) — verificada SOMENTE no momento em que L chega a PATTERN_LENGTH,
  * nunca antes, para nao emitir INVALIDATED duplicado quando o preview em tempo real ja
- * mostrou o percentual.
+ * mostrou o percentual. Quando a regra e mais curta que isso (ex.: 8 velas), essa checagem
+ * inteira e pulada e a confirmacao acontece direto.
  */
 
 export interface WickPreview {
@@ -119,6 +124,18 @@ export class TwelveCandlesEngine {
 
     if (matchedLength === PATTERN_LENGTH) {
       const window = trimmed.slice(trimmed.length - PATTERN_LENGTH);
+
+      if (!WICK_RULE_APPLIES) {
+        // Regra atual e mais curta que a posicao do pavio da 11a — nao ha o que checar,
+        // confirma direto.
+        return {
+          kind: 'CONFIRMED',
+          window,
+          wickPercentage11: WICK_NOT_APPLICABLE,
+          progress: this.buildProgress(activeId, state, PATTERN_LENGTH),
+        };
+      }
+
       const eleventh = window[WICK_ELEVENTH_INDEX]!;
       const wickPct = lowerWickPercentage(eleventh);
 
@@ -160,9 +177,9 @@ export class TwelveCandlesEngine {
 
   /**
    * Preview em tempo real do pavio da 11a vela ENQUANTO ela ainda esta se formando.
-   * Retorna null quando o ativo nao esta na posicao 10/12 (so faz sentido mostrar o
-   * preview logo antes da vela que ocuparia a posicao 11). Nunca confirma nem invalida
-   * nada — e apenas informativo ("Enquanto aberta e apenas pre-condicao").
+   * Retorna null quando o ativo nao esta logo antes da posicao do pavio (ou quando
+   * WICK_RULE_APPLIES=false, ja que matchedLength nunca chega em WICK_ELEVENTH_INDEX se a
+   * regra e mais curta que isso). Nunca confirma nem invalida nada — e apenas informativo.
    */
   previewEleventh(activeId: number, formingCandle: Candle): WickPreview | null {
     const state = this.states.get(activeId);

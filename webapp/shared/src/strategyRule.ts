@@ -1,33 +1,56 @@
-import type { CandleColor } from './types.js';
+import type { CandleColor, PatternDisplayState } from './types.js';
 
 /**
- * Regra "12 Candles" — CONGELADA. Nao alterar nem otimizar.
+ * Regra "12 Candles" — CONGELADA. Nao alterar nem otimizar (fora das mudancas explicitamente
+ * pedidas aqui, versionadas ao longo do tempo pelo usuario).
  *
- * Extensao experimental para 14 velas (decisao do usuario, testando entrada COMPRADA/CALL
- * sem gale): o nome do array/constante foi mantido por estabilidade (schema do banco, ids
- * historicos), mas a regra completa hoje e:
+ * Reduzida para 8 velas (decisao do usuario: esse prefixo de 8 cores apareceu em toda
+ * ocorrencia observada nas rodadas anteriores de 12+ velas, entao virou a regra inteira):
  *
- * G R G R R G R R R R R G G R
+ * G R G R R G R R
  *
- * - Posicao 11 (index 10) precisa ser R com pavio inferior >= WICK_11_MIN_PERCENTAGE (igual
- *   a antes, inalterado por todas as extensoes).
- * - Posicao 13 (index 12) precisa ser G.
- * - Posicao 14 (index 13, a NOVA ultima posicao) precisa ser R — e o sinal de confirmacao.
- * - Apos a 14a vela FECHAR, o sinal e ENTRY_DIRECTION (CALL) na 15a vela. Sem gale.
+ * - Sinal de confirmacao: a propria 8a vela fechando (sem checagem de pavio — a vela
+ *   "pavio 11" nao existe mais nesse tamanho de padrao, ver WICK_RULE_APPLIES abaixo).
+ * - Apos a 8a vela FECHAR, o sinal e ENTRY_DIRECTION (PUT) na 9a vela. Sem gale na entrada
+ *   oficial — a analise (backtest) ainda simula os dois lados do Gale 1 para comparacao.
+ *
+ * O nome do array/constante (TWELVE_CANDLES_PATTERN) e os campos candle13/candle14 em
+ * PatternOccurrence foram mantidos por estabilidade (schema do banco, tipos ja em uso)
+ * mesmo com a regra tendo mudado de tamanho varias vezes.
  */
-export const TWELVE_CANDLES_PATTERN: readonly CandleColor[] = [
-  'G', 'R', 'G', 'R', 'R', 'G', 'R', 'R', 'R', 'R', 'R', 'G', 'G', 'R',
-];
+export const TWELVE_CANDLES_PATTERN: readonly CandleColor[] = ['G', 'R', 'G', 'R', 'R', 'G', 'R', 'R'];
 
-export const PATTERN_LENGTH = TWELVE_CANDLES_PATTERN.length; // 14
-export const WICK_ELEVENTH_INDEX = 10; // posicao 11 (1-based) = index 10 (0-based) — inalterado
+export const PATTERN_LENGTH = TWELVE_CANDLES_PATTERN.length; // 8
+export const WICK_ELEVENTH_INDEX = 10; // posicao 11 (1-based) = index 10 (0-based) — posicao fixa, historica
 export const WICK_11_MIN_PERCENTAGE = 0.25;
-/** Direcao da entrada na vela seguinte a confirmacao — unica fonte de verdade (nao hardcodar 'PUT'/'CALL' em outro lugar). */
-export const ENTRY_DIRECTION = 'CALL' as const;
+/**
+ * Se a regra atual e longa o bastante para conter a posicao do pavio da 11a vela. Quando
+ * false (como na regra de 8 velas de hoje), o motor pula inteiramente a checagem de pavio —
+ * nao ha vela nessa posicao para medir.
+ */
+export const WICK_RULE_APPLIES = WICK_ELEVENTH_INDEX < PATTERN_LENGTH;
 
-if (TWELVE_CANDLES_PATTERN[WICK_ELEVENTH_INDEX] !== 'R') {
-  throw new Error('Invariante quebrada: a 11a posicao da regra precisa ser R.');
+/** Direcao da entrada na vela seguinte a confirmacao — unica fonte de verdade (nao hardcodar 'PUT'/'CALL' em outro lugar). */
+export const ENTRY_DIRECTION = 'PUT' as const;
+
+if (WICK_RULE_APPLIES && TWELVE_CANDLES_PATTERN[WICK_ELEVENTH_INDEX] !== 'R') {
+  throw new Error('Invariante quebrada: quando aplicavel, a 11a posicao da regra precisa ser R.');
 }
-if (TWELVE_CANDLES_PATTERN[PATTERN_LENGTH - 1] !== 'R') {
-  throw new Error('Invariante quebrada: a ultima posicao da regra (14a) precisa ser R.');
+
+/**
+ * Estado de exibicao do card de monitor, derivado do tamanho do prefixo casado — relativo a
+ * PATTERN_LENGTH (nao a numeros fixos), entao continua correto conforme a regra muda de
+ * tamanho. Quando o pavio da 11a nao se aplica (regra mais curta que isso), ATENCAO/PRE_SINAL
+ * nunca disparam e so resta um ACOMPANHANDO generico um passo antes de confirmar.
+ */
+export function patternDisplayState(matchedLength: number): PatternDisplayState {
+  if (matchedLength >= PATTERN_LENGTH) return 'CONFIRMADO';
+  if (WICK_RULE_APPLIES) {
+    if (matchedLength === PATTERN_LENGTH - 1) return 'PRE_SINAL';
+    if (matchedLength === WICK_ELEVENTH_INDEX) return 'ATENCAO';
+    if (matchedLength === WICK_ELEVENTH_INDEX - 1) return 'ACOMPANHANDO';
+  } else if (matchedLength === PATTERN_LENGTH - 1) {
+    return 'ACOMPANHANDO';
+  }
+  return 'MONITORANDO';
 }

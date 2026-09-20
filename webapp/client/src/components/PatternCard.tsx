@@ -1,5 +1,5 @@
 import type { PatternDisplayState, PatternProgress } from '@polarium12c/shared';
-import { PATTERN_LENGTH } from '@polarium12c/shared';
+import { PATTERN_LENGTH, WICK_RULE_APPLIES } from '@polarium12c/shared';
 import { MiniCandles } from './MiniCandles.js';
 
 interface Props {
@@ -45,28 +45,30 @@ export function PatternCard({ activeId, label, progress }: Props) {
 
       <MiniCandles received={progress?.received ?? []} />
 
-      <div className="mt-3 rounded-lg bg-slate-950/60 border border-slate-800 p-3 text-sm">
-        <div className="flex justify-between text-slate-400 mb-1">
-          <span>11ª vela (pavio inferior)</span>
+      {WICK_RULE_APPLIES && (
+        <div className="mt-3 rounded-lg bg-slate-950/60 border border-slate-800 p-3 text-sm">
+          <div className="flex justify-between text-slate-400 mb-1">
+            <span>11ª vela (pavio inferior)</span>
+            {wick11 && wick11.currentPercentage !== null ? (
+              <span className={wick11.currentPercentage >= wick11.requiredPercentage ? 'text-emerald-400' : 'text-amber-400'}>
+                {(wick11.currentPercentage * 100).toFixed(1)}%
+              </span>
+            ) : (
+              <span>—</span>
+            )}
+          </div>
           {wick11 && wick11.currentPercentage !== null ? (
-            <span className={wick11.currentPercentage >= wick11.requiredPercentage ? 'text-emerald-400' : 'text-amber-400'}>
-              {(wick11.currentPercentage * 100).toFixed(1)}%
-            </span>
+            <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full ${wick11.currentPercentage >= wick11.requiredPercentage ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                style={{ width: `${Math.min(100, wick11.currentPercentage * 100)}%` }}
+              />
+            </div>
           ) : (
-            <span>—</span>
+            <div className="text-xs text-slate-500">Aguardando a 11ª vela...</div>
           )}
         </div>
-        {wick11 && wick11.currentPercentage !== null ? (
-          <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-            <div
-              className={`h-full ${wick11.currentPercentage >= wick11.requiredPercentage ? 'bg-emerald-500' : 'bg-amber-500'}`}
-              style={{ width: `${Math.min(100, wick11.currentPercentage * 100)}%` }}
-            />
-          </div>
-        ) : (
-          <div className="text-xs text-slate-500">Aguardando a 11ª vela...</div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

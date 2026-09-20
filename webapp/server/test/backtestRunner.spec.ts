@@ -21,8 +21,10 @@ function redWithWick(activeId: number, from: number, wickFraction: number): Cand
 
 /**
  * Constroi N ocorrencias consecutivas e nao sobrepostas do padrao completo (TWELVE_CANDLES_PATTERN.length
- * velas do padrao + 1 vela de entrada). A entrada e sempre ENTRY_DIRECTION (hoje CALL) —
- * entao `entryCandleUp=true` (vela de entrada verde) produz WIN, e `false` (vermelha) produz LOSS.
+ * velas do padrao + 1 vela de entrada). A entrada e sempre ENTRY_DIRECTION (hoje PUT) —
+ * entao `entryCandleUp=true` (vela de entrada verde) produz LOSS, e `false` (vermelha) produz WIN.
+ * redWithWick fica sem uso quando a regra atual e curta demais para alcancar a posicao 10
+ * (WICK_RULE_APPLIES=false) — inofensivo, so nao e chamada.
  */
 function buildOccurrences(activeId: number, baseFrom: number, count: number, entryCandleUp: boolean): Candle[] {
   const candles: Candle[] = [];
@@ -66,7 +68,7 @@ describe('runBacktest', () => {
     await db.end();
   });
 
-  it('detecta multiplas ocorrencias, calcula WIN/LOSS pela vela de entrada (CALL), e separa "todas" de "primeira do dia"', async () => {
+  it('detecta multiplas ocorrencias, calcula WIN/LOSS pela vela de entrada (PUT), e separa "todas" de "primeira do dia"', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
 
@@ -77,8 +79,8 @@ describe('runBacktest', () => {
 
     // 2 ocorrencias no mesmo "dia logico" do teste (nao precisa ser exatamente 1 dia UTC
     // real aqui, so precisamos de >=2 ocorrencias no total para testar a separacao).
-    // Entrada verde (fecha acima da abertura) -> CALL ganha.
-    const candles = buildOccurrences(activeId, dayStart, 2, true);
+    // Entrada vermelha (fecha abaixo da abertura) -> PUT ganha.
+    const candles = buildOccurrences(activeId, dayStart, 2, false);
     broker.seedCandles(activeId, candles);
 
     const { occurrences, summary } = await runBacktest(db, broker, [activeId], 30);
@@ -98,11 +100,11 @@ describe('runBacktest', () => {
     expect(persisted.map((o) => o.result)).toEqual(['WIN', 'WIN']);
   });
 
-  it('marca LOSS quando a vela de entrada (CALL) fecha ABAIXO da abertura', async () => {
+  it('marca LOSS quando a vela de entrada (PUT) fecha ACIMA da abertura', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const activeId = 76;
-    const candles = buildOccurrences(activeId, safeDayStart(), 1, false);
+    const candles = buildOccurrences(activeId, safeDayStart(), 1, true);
     broker.seedCandles(activeId, candles);
 
     const { occurrences } = await runBacktest(db, broker, [activeId], 30);
@@ -110,18 +112,18 @@ describe('runBacktest', () => {
     expect(occurrences[0]!.result).toBe('LOSS');
   });
 
-  it('Gale 1 combinado: WIN da 1a entrada (CALL) passa direto, LOSS usa o resultado da reentrada (candle14)', async () => {
+  it('Gale 1 combinado: WIN da 1a entrada (PUT) passa direto, LOSS usa o resultado da reentrada (candle14)', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const dayStart = safeDayStart();
 
-    // Ativo A: 1a entrada (CALL) WIN — vela de entrada verde. Nao deveria nem olhar para candle14 (nem existe aqui).
+    // Ativo A: 1a entrada (PUT) WIN — vela de entrada vermelha. Nao deveria nem olhar para candle14 (nem existe aqui).
     const winnerActiveId = 81;
-    broker.seedCandles(winnerActiveId, buildOccurrences(winnerActiveId, dayStart, 1, true));
+    broker.seedCandles(winnerActiveId, buildOccurrences(winnerActiveId, dayStart, 1, false));
 
-    // Ativo B: 1a entrada (CALL) LOSS — vela de entrada vermelha — + candle14 controlada (fecha ACIMA da abertura).
+    // Ativo B: 1a entrada (PUT) LOSS — vela de entrada verde — + candle14 controlada (fecha ACIMA da abertura).
     const loserActiveId = 76;
-    const loserCandles = buildOccurrences(loserActiveId, dayStart, 1, false);
+    const loserCandles = buildOccurrences(loserActiveId, dayStart, 1, true);
     const candle14From = loserCandles[loserCandles.length - 1]!.to;
     loserCandles.push(green(loserActiveId, candle14From));
     broker.seedCandles(loserActiveId, loserCandles);
@@ -130,10 +132,10 @@ describe('runBacktest', () => {
 
     expect(summary.reentry.consideredLosses).toBe(1); // so o ativo B perdeu a 1a entrada
     expect(summary.reentry.missingCandle14).toBe(0);
-    // Gale mesma direcao (CALL): WIN direto (ativo A) + candle14 do ativo B em alta -> CALL ganha = 2 wins.
-    expect(summary.reentry.combinedSameDirection).toEqual({ wins: 2, losses: 0, dojis: 0 });
-    // Gale direcao contraria (PUT): WIN direto (ativo A) passa igual + candle14 em alta -> PUT perde = 1 win, 1 loss.
-    expect(summary.reentry.combinedOppositeDirection).toEqual({ wins: 1, losses: 1, dojis: 0 });
+    // Gale mesma direcao (PUT): WIN direto (ativo A) + candle14 do ativo B em alta -> PUT perde = 1 win, 1 loss.
+    expect(summary.reentry.combinedSameDirection).toEqual({ wins: 1, losses: 1, dojis: 0 });
+    // Gale direcao contraria (CALL): WIN direto (ativo A) passa igual + candle14 em alta -> CALL ganha = 2 wins.
+    expect(summary.reentry.combinedOppositeDirection).toEqual({ wins: 2, losses: 0, dojis: 0 });
   });
 
   it('perDay inclui dias sem nenhum sinal (bucket NONE) para todo o periodo pedido', async () => {

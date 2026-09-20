@@ -20,6 +20,8 @@ function redWithWick(from: number, wickFraction: number): Candle {
   return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 100, close: wickFraction * 100, high: 100, low: 0, isClosed: true };
 }
 
+// redWithWick(i===10) fica sem uso quando a regra atual e curta demais para alcancar essa
+// posicao (WICK_RULE_APPLIES=false) — inofensivo, so nunca e chamada.
 function buildTwelve(baseFrom: number, wick: number): Candle[] {
   return TWELVE_CANDLES_PATTERN.map((color: CandleColor, i: number) => {
     const from = baseFrom + i * SIZE;
@@ -28,9 +30,7 @@ function buildTwelve(baseFrom: number, wick: number): Candle[] {
 }
 
 /** handleCandle agora persiste de forma assincrona (Postgres) antes de emitir os eventos —
- * da um respiro pro event loop processar essas promises pendentes antes de checar `received`.
- * A regra hoje tem TWELVE_CANDLES_PATTERN.length velas (13) — uma a mais que antes — entao
- * o teste que alimenta o padrao inteiro precisa de mais margem que o antigo 1000ms fixo. */
+ * da um respiro pro event loop processar essas promises pendentes antes de checar `received`. */
 function flush(): Promise<void> {
   return new Promise((r) => setTimeout(r, 3500));
 }
@@ -76,7 +76,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     service.stop();
   });
 
-  it('candle ainda aberto nunca gera CANDLE_CLOSED nem confirma nada, so preview quando aplicavel', async () => {
+  it('candle ainda aberto nunca gera CANDLE_CLOSED nem confirma nada', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const service = new LiveMonitorService(db, broker, [ACTIVE]);
@@ -86,17 +86,19 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     service.on('event', (e: AppEvent) => received.push(e));
 
     const baseFrom = 1_800_000_000;
-    const tenClosed = buildTwelve(baseFrom, 0.5).slice(0, 10);
-    for (const c of tenClosed) broker.pushLiveCandle(ACTIVE, c);
+    // Alimenta todas menos a ultima vela do padrao, deixando a ultima posicao "em aberto".
+    const allButLast = buildTwelve(baseFrom, 0.5).slice(0, TWELVE_CANDLES_PATTERN.length - 1);
+    for (const c of allButLast) broker.pushLiveCandle(ACTIVE, c);
     await flush();
 
     received.length = 0; // limpa para isolar o efeito do candle aberto
 
+    const lastClosed = allButLast[allButLast.length - 1]!;
     const forming: Candle = {
       activeId: ACTIVE,
       size: SIZE,
-      from: tenClosed[9]!.to,
-      to: tenClosed[9]!.to + SIZE,
+      from: lastClosed.to,
+      to: lastClosed.to + SIZE,
       open: 100,
       close: 40,
       high: 100,
@@ -109,8 +111,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     expect(received.some((e) => e.type === 'CANDLE_CLOSED')).toBe(false);
     expect(received.some((e) => e.type === 'PATTERN_CONFIRMED')).toBe(false);
     const progressEvent = received.find((e) => e.type === 'PATTERN_PROGRESS');
-    expect(progressEvent).toBeDefined();
-    expect((progressEvent!.payload as any).progress.wick11.candleClosed).toBe(false);
+    expect(progressEvent).toBeUndefined(); // candle aberto nunca alimenta o engine, so o preview (nao aplicavel a esta regra)
 
     service.stop();
   });
