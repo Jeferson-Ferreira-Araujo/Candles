@@ -60,12 +60,11 @@ describe('OrderService', () => {
 
     await service.handleConfirmed(ACTIVE, window, 0.5);
 
-    const lastCandle = window[window.length - 1]!;
-    const signalId = `12CANDLES-${ACTIVE}-${lastCandle.to}-PUT`;
+    const signalId = `12CANDLES-${ACTIVE}-${window[11]!.to}-CALL`;
     expect((await getSignal(db, signalId))?.status).toBe('ORDER_CONFIRMED');
 
-    // Fecha a vela de entrada (WIN para PUT: close < open) para o MockBroker resolver a ordem.
-    broker.pushLiveCandle(ACTIVE, red(lastCandle.to));
+    // Fecha a 13a vela (WIN: close > open) para o MockBroker resolver a ordem.
+    broker.pushLiveCandle(ACTIVE, green(window[11]!.to));
 
     // O polling roda em background — espera ele convergir.
     await new Promise((r) => setTimeout(r, 1500));
@@ -86,7 +85,7 @@ describe('OrderService', () => {
 
     await service.handleConfirmed(ACTIVE, window, 0.5);
 
-    const signalId = `12CANDLES-${ACTIVE}-${window[window.length - 1]!.to}-PUT`;
+    const signalId = `12CANDLES-${ACTIVE}-${window[11]!.to}-CALL`;
     expect((await getSignal(db, signalId))?.status).toBe('BLOCKED');
     const events = await listEvents(db, 50);
     expect(events.some((e) => e.type === 'BLOCKED_BY_SAFETY_CHECK')).toBe(true);
@@ -100,7 +99,7 @@ describe('OrderService', () => {
 
     await service.handleConfirmed(ACTIVE, window, 0.5);
 
-    const signalId = `12CANDLES-${ACTIVE}-${window[window.length - 1]!.to}-PUT`;
+    const signalId = `12CANDLES-${ACTIVE}-${window[11]!.to}-CALL`;
     expect((await getSignal(db, signalId))?.status).toBe('BLOCKED');
   });
 
@@ -127,7 +126,7 @@ describe('OrderService', () => {
     for (const c of window2) broker.pushLiveCandle(ACTIVE, c);
     await service.handleConfirmed(ACTIVE, window2, 0.5);
 
-    const signalId2 = `12CANDLES-${ACTIVE}-${window2[window2.length - 1]!.to}-PUT`;
+    const signalId2 = `12CANDLES-${ACTIVE}-${window2[11]!.to}-CALL`;
     expect((await getSignal(db, signalId2))?.status).toBe('BLOCKED');
 
     const { rows } = await db.query('SELECT COUNT(*) as n FROM orders');
@@ -140,8 +139,8 @@ describe('OrderService', () => {
     for (const c of window) broker.pushLiveCandle(ACTIVE, c);
     await service.handleConfirmed(ACTIVE, window, 0.5);
 
-    // Resolve como LOSS para PUT (vela de entrada fecha ACIMA da abertura).
-    broker.pushLiveCandle(ACTIVE, green(window[window.length - 1]!.to));
+    // Resolve como LOSS (13a fecha abaixo da abertura).
+    broker.pushLiveCandle(ACTIVE, red(window[11]!.to));
     await new Promise((r) => setTimeout(r, 1500));
 
     const daily = await getDailyResult(db, new Date().toISOString().slice(0, 10));
@@ -159,7 +158,7 @@ describe('OrderService', () => {
     for (const c of window2Other) broker.pushLiveCandle(OTHER_ACTIVE, c);
     await service.handleConfirmed(OTHER_ACTIVE, window2Other, 0.5);
 
-    const signalId2 = `12CANDLES-${OTHER_ACTIVE}-${window2Other[window2Other.length - 1]!.to}-PUT`;
+    const signalId2 = `12CANDLES-${OTHER_ACTIVE}-${window2Other[11]!.to}-CALL`;
     expect((await getSignal(db, signalId2))?.status).toBe('BLOCKED');
   });
 });

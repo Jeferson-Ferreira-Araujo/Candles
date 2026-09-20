@@ -28,11 +28,9 @@ function buildTwelve(baseFrom: number, wick: number): Candle[] {
 }
 
 /** handleCandle agora persiste de forma assincrona (Postgres) antes de emitir os eventos —
- * da um respiro pro event loop processar essas promises pendentes antes de checar `received`.
- * A regra hoje tem TWELVE_CANDLES_PATTERN.length velas (13) — uma a mais que antes — entao
- * o teste que alimenta o padrao inteiro precisa de mais margem que o antigo 1000ms fixo. */
+ * da um respiro pro event loop processar essas promises pendentes antes de checar `received`. */
 function flush(): Promise<void> {
-  return new Promise((r) => setTimeout(r, 2000));
+  return new Promise((r) => setTimeout(r, 1000));
 }
 
 describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {

@@ -14,20 +14,17 @@ import {
 /**
  * Motor da estrategia "12 Candles". Regra CONGELADA — nao alterar, nao otimizar.
  *
- * Algoritmo: mantem, por ativo, um buffer com os ultimos ate PATTERN_LENGTH (hoje 13)
- * candles M1 FECHADOS e CONSECUTIVOS (qualquer gap zera o buffer para conter so o candle
- * novo). A cada candle fechado, recalcula do zero o maior L tal que as ULTIMAS L cores do
- * buffer sejam iguais as PRIMEIRAS L posicoes da regra (TWELVE_CANDLES_PATTERN.slice(0, L)).
- * Isso implementa exatamente "procure o maior prefixo da regra que ainda corresponda ao
- * final das velas recebidas" — e, por recalcular do zero a cada tick sobre uma janela
- * deslizante, suporta padroes sobrepostos sem nenhuma logica extra de "continuar apos
- * confirmar". A ultima posicao da regra (hoje a 13a, sempre G) e so mais uma posicao do
- * array — nenhuma logica dedicada precisou mudar quando a regra passou de 12 para 13 velas.
+ * Algoritmo: mantem, por ativo, um buffer com os ultimos ate 12 candles M1 FECHADOS e
+ * CONSECUTIVOS (qualquer gap zera o buffer para conter so o candle novo). A cada candle
+ * fechado, recalcula do zero o maior L tal que as ULTIMAS L cores do buffer sejam iguais
+ * as PRIMEIRAS L posicoes da regra (TWELVE_CANDLES_PATTERN.slice(0, L)). Isso implementa
+ * exatamente "procure o maior prefixo da regra que ainda corresponda ao final das velas
+ * recebidas" — e, por recalcular do zero a cada tick sobre uma janela deslizante, suporta
+ * padroes sobrepostos sem nenhuma logica extra de "continuar apos confirmar".
  *
- * A regra do pavio da 11a vela e verificada SOMENTE no momento em que L chega a
- * PATTERN_LENGTH (a unica vela cuja posicao 11 e definida por essa janela especifica) —
- * nunca antes, para nao emitir INVALIDATED duplicado quando o preview em tempo real ja
- * mostrou o percentual.
+ * A regra do pavio da 11a vela e verificada SOMENTE no momento em que L chega a 12 (a
+ * unica vela cuja posicao 11 e definida por essa janela especifica) — nunca antes, para
+ * nao emitir INVALIDATED duplicado quando o preview em tempo real ja mostrou o percentual.
  */
 
 export interface WickPreview {

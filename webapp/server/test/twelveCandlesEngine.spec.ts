@@ -33,7 +33,7 @@ function colorFactory(color: CandleColor, from: number): Candle {
   return color === 'G' ? green(from) : red(from);
 }
 
-/** Gera as velas da regra (hoje 13), com a 11a controlada por `wick11Fraction`. */
+/** Gera as 12 velas da regra, com a 11a controlada por `wick11Fraction`. */
 function buildFullPattern(baseFrom: number, wick11Fraction: number): Candle[] {
   return TWELVE_CANDLES_PATTERN.map((color, i) => {
     const from = baseFrom + i * SIZE;
@@ -54,9 +54,9 @@ describe('TwelveCandlesEngine', () => {
     const last = ticks[ticks.length - 1]!;
     expect(last.kind).toBe('CONFIRMED');
     if (last.kind === 'CONFIRMED') {
-      expect(last.window).toHaveLength(TWELVE_CANDLES_PATTERN.length);
+      expect(last.window).toHaveLength(12);
       expect(last.wickPercentage11).toBeCloseTo(0.5, 10);
-      expect(last.progress.matchedLength).toBe(TWELVE_CANDLES_PATTERN.length);
+      expect(last.progress.matchedLength).toBe(12);
       expect(last.progress.state).toBe('CONFIRMADO');
     }
   });
@@ -137,19 +137,19 @@ describe('TwelveCandlesEngine', () => {
     expect(() => engine.onCandleClosed(ACTIVE, openCandle)).toThrow();
   });
 
-  it('suporta padroes sobrepostos: apos confirmar, a propria ultima vela (G) pode iniciar um novo casamento', () => {
+  it('suporta padroes sobrepostos: apos confirmar, a propria 12a vela (G) pode iniciar um novo casamento', () => {
     const engine = new TwelveCandlesEngine();
     const first = buildFullPattern(BASE, 0.5);
     feed(engine, first);
 
-    // A vela seguinte a confirmacao chega vermelha (nao interessa o resultado da entrada para este teste).
+    // A 13a vela chega vermelha (nao interessa o resultado do CALL para este teste).
     const nextFrom = first[first.length - 1]!.to;
-    const progressAfterNext = engine.onCandleClosed(ACTIVE, red(nextFrom));
-    expect(progressAfterNext.kind).toBe('PROGRESS');
-    if (progressAfterNext.kind === 'PROGRESS') {
-      // A ultima vela (G) do primeiro padrao bate com a posicao 0 (G) da regra; a proxima
-      // (R) bate com a posicao 1 (R) => o novo casamento sobreposto deve estar em progresso = 2.
-      expect(progressAfterNext.progress.matchedLength).toBe(2);
+    const progressAfter13th = engine.onCandleClosed(ACTIVE, red(nextFrom));
+    expect(progressAfter13th.kind).toBe('PROGRESS');
+    if (progressAfter13th.kind === 'PROGRESS') {
+      // A 12a vela (G) do primeiro padrao bate com a posicao 0 (G) da regra; a 13a (R) bate
+      // com a posicao 1 (R) => o novo casamento sobreposto deve estar em progresso = 2.
+      expect(progressAfter13th.progress.matchedLength).toBe(2);
     }
   });
 

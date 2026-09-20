@@ -73,13 +73,13 @@ export class MockBrokerAdapter implements BrokerAdapter {
       if (order.resolution || order.activeId !== activeId || !order.openCandle) continue;
       // A ordem resolve no PRIMEIRO candle fechado que comeca IMEDIATAMENTE apos o candle vigente na compra.
       if (closedCandle.from === order.openCandle.to) {
-        const wentUp = closedCandle.close > closedCandle.open;
-        const wentDown = closedCandle.close < closedCandle.open;
-        // CALL ganha quando sobe, PUT ganha quando desce — o mock precisa respeitar a
-        // direcao real da ordem, nao sempre pontuar como CALL.
-        const won = order.direction === 'CALL' ? wentUp : wentDown;
-        const result = !wentUp && !wentDown ? 'DOJI' : won ? 'WIN' : 'LOSS';
-        const pnl = result === 'WIN' ? order.amount * this.config.payout : result === 'LOSS' ? -order.amount : 0;
+        const pnl =
+          closedCandle.close > closedCandle.open
+            ? order.amount * this.config.payout
+            : closedCandle.close < closedCandle.open
+              ? -order.amount
+              : 0;
+        const result = closedCandle.close > closedCandle.open ? 'WIN' : closedCandle.close < closedCandle.open ? 'LOSS' : 'DOJI';
         order.resolution = { result, pnl, payoutPercentage: this.config.payout };
         this.balance += pnl;
         this.orders.set(orderId, order);
