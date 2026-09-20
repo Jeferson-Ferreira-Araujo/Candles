@@ -1,10 +1,16 @@
-import type { AssetInfo, BacktestSummary } from '@polarium12c/shared';
+import type { AssetInfo } from '@polarium12c/shared';
+
+export interface AssetTally {
+  wins: number;
+  losses: number;
+  dojis: number;
+}
 
 export type AutoAnalysisState =
   | { status: 'idle' }
-  | { status: 'loading' }
+  | { status: 'loading'; completed: number; total: number; currentAssetName: string | null }
   | { status: 'empty' }
-  | { status: 'done'; summary: BacktestSummary; assets: AssetInfo[] }
+  | { status: 'done'; overall: AssetTally; perAsset: Record<number, AssetTally>; assets: AssetInfo[]; failedCount: number }
   | { status: 'error'; message: string };
 
 function winRate(t: { wins: number; losses: number; dojis: number }): number | null {
@@ -24,9 +30,20 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
   if (state.status === 'idle') return null;
 
   if (state.status === 'loading') {
+    const pct = state.total > 0 ? Math.round((state.completed / state.total) * 100) : 0;
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-400">
-        Analisando os últimos 7 dias nos ativos OTC digital disponíveis...
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-2">
+        <div className="flex items-center justify-between text-sm text-slate-300">
+          <span>
+            Analisando os últimos 7 dias{state.currentAssetName ? ` — ${state.currentAssetName}` : '...'}
+          </span>
+          <span className="text-slate-500 shrink-0">
+            {state.completed}/{state.total}
+          </span>
+        </div>
+        <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+          <div className="h-full bg-sky-600 transition-all duration-300" style={{ width: `${pct}%` }} />
+        </div>
       </div>
     );
   }
@@ -47,12 +64,11 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
     );
   }
 
-  const { summary, assets } = state;
+  const { overall, perAsset, assets, failedCount } = state;
   const nameOf = (id: number) => assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
-  const overall = summary.allOccurrences;
   const overallRate = winRate(overall);
 
-  const ranked = Object.entries(summary.perAsset)
+  const ranked = Object.entries(perAsset)
     .map(([id, t]) => ({ id: Number(id), ...t, total: t.wins + t.losses + t.dojis, rate: winRate(t) }))
     .filter((a) => a.total > 0)
     .sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.total - a.total);
@@ -62,8 +78,13 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
       <div>
         <div className="font-semibold text-sky-200">Análise automática — últimos 7 dias (OTC digital)</div>
         <p className="text-xs text-slate-400 mt-0.5">
-          Sobre todos os {assets.length} ativos OTC digital disponíveis. Consolidado — não é garantia futura.
+          Sobre {assets.length} ativos OTC digital disponíveis. Consolidado — não é garantia futura.
         </p>
+        {failedCount > 0 && (
+          <p className="text-xs text-amber-400 mt-0.5">
+            {failedCount} ativo(s) falharam ao consultar e foram ignorados no resultado abaixo.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">

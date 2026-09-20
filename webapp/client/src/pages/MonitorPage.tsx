@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
 import { PatternCard } from '../components/PatternCard.js';
-import { AutoAnalysisCard, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
+import { AutoAnalysisCard, type AssetTally, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
 import { api } from '../api.js';
 
@@ -51,24 +51,40 @@ export function MonitorPage() {
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   }
 
-  // Sob demanda (botao), nao mais automatico no login — evita atrasar o fluxo de login
-  // com uma varredura de 7 dias sobre todos os ativos OTC digital antes de liberar a tela.
+  // Sob demanda (botao), nao mais automatico no login. Roda o backtest UM ATIVO POR VEZ
+  // (em vez de uma unica chamada com todos os ids) especificamente para poder mostrar uma
+  // barra de progresso real — cada resposta que chega e um incremento visivel, nao uma
+  // espera indeterminada. Erro em um ativo isolado (ex.: ativo invalido) nao aborta os
+  // demais, so e contado e ignorado no resultado final.
   async function runAutoAnalysis() {
-    setAutoAnalysis({ status: 'loading' });
-    try {
-      const allAssets = await api.getAssets();
-      if (allAssets.length === 0) {
-        setAutoAnalysis({ status: 'empty' });
-        return;
-      }
-      const { summary } = await api.runBacktest(
-        allAssets.map((a) => a.id),
-        AUTO_ANALYSIS_DAYS
-      );
-      setAutoAnalysis({ status: 'done', summary, assets: allAssets });
-    } catch (err) {
-      setAutoAnalysis({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    const allAssets = await api.getAssets().catch(() => [] as AssetInfo[]);
+    if (allAssets.length === 0) {
+      setAutoAnalysis({ status: 'empty' });
+      return;
     }
+
+    setAutoAnalysis({ status: 'loading', completed: 0, total: allAssets.length, currentAssetName: allAssets[0]!.name });
+
+    const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
+    const perAsset: Record<number, AssetTally> = {};
+    let failedCount = 0;
+
+    for (let i = 0; i < allAssets.length; i++) {
+      const asset = allAssets[i]!;
+      setAutoAnalysis({ status: 'loading', completed: i, total: allAssets.length, currentAssetName: asset.name });
+      try {
+        const { summary } = await api.runBacktest([asset.id], AUTO_ANALYSIS_DAYS);
+        const t = summary.perAsset[asset.id] ?? summary.allOccurrences;
+        perAsset[asset.id] = t;
+        overall.wins += t.wins;
+        overall.losses += t.losses;
+        overall.dojis += t.dojis;
+      } catch {
+        failedCount++;
+      }
+    }
+
+    setAutoAnalysis({ status: 'done', overall, perAsset, assets: allAssets, failedCount });
   }
 
   return (
