@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
-import { PATTERN_LENGTH, TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import { ENTRY_DIRECTION, PATTERN_LENGTH, TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+
+const LAST_PATTERN_COLOR = TWELVE_CANDLES_PATTERN[PATTERN_LENGTH - 1];
+const LAST_COLOR_LABEL = LAST_PATTERN_COLOR === 'G' ? 'verde' : 'vermelha';
 import { PatternCard } from '../components/PatternCard.js';
 import { AutoAnalysisCard, type AssetTally, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
@@ -28,7 +31,7 @@ function describeEvent(e: AppEvent): string {
       return `${active} — ${progress?.matchedLength ?? '?'}/${PATTERN_LENGTH} velas`;
     }
     case 'PATTERN_CONFIRMED':
-      return `${active} — SINAL CONFIRMADO — entrar PUT`;
+      return `${active} — SINAL CONFIRMADO — entrar ${ENTRY_DIRECTION}`;
     case 'PATTERN_INVALIDATED':
       return `${active} — padrão invalidado (${(e.payload as any)?.reason ?? '?'})`;
     default:
@@ -151,7 +154,8 @@ export function MonitorPage() {
       <div>
         <h1 className="text-xl sm:text-2xl font-bold">Monitor de Ativos</h1>
         <p className="text-slate-400 text-sm">
-          Acompanhamento em tempo real da formação do padrão ({PATTERN_LENGTH} velas + entrada PUT na seguinte).
+          Acompanhamento em tempo real da formação do padrão ({PATTERN_LENGTH} velas + entrada {ENTRY_DIRECTION} na
+          seguinte).
         </p>
       </div>
 
@@ -192,8 +196,8 @@ export function MonitorPage() {
           ))}
         </div>
         <div className="sm:ml-auto text-sm text-slate-300">
-          Após a {PATTERN_LENGTH}ª vela fechar (verde):{' '}
-          <span className="font-semibold text-white">Entrar PUT na {PATTERN_LENGTH + 1}ª</span>
+          Após a {PATTERN_LENGTH}ª vela fechar ({LAST_COLOR_LABEL}):{' '}
+          <span className="font-semibold text-white">Entrar {ENTRY_DIRECTION} na {PATTERN_LENGTH + 1}ª</span>
         </div>
       </div>
 

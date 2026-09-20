@@ -1,4 +1,7 @@
-import type { AssetInfo } from '@polarium12c/shared';
+import type { AssetInfo, Direction } from '@polarium12c/shared';
+import { ENTRY_DIRECTION } from '@polarium12c/shared';
+
+const OPPOSITE_DIRECTION: Direction = (ENTRY_DIRECTION as Direction) === 'PUT' ? 'CALL' : 'PUT';
 
 export interface AssetTally {
   wins: number;
@@ -20,8 +23,8 @@ export type AutoAnalysisState =
       days: number;
       /** Sempre presente (Gale 1 e calculado em toda execucao, sem depender de nenhuma configuracao). */
       reentry: {
-        combinedSameDirection: AssetTally; // resultado final: 1a entrada (PUT), e se perder, gale repetindo PUT
-        combinedOppositeDirection: AssetTally; // idem, mas gale invertendo para CALL
+        combinedSameDirection: AssetTally; // resultado final: 1a entrada (ENTRY_DIRECTION), e se perder, gale repetindo a mesma direcao
+        combinedOppositeDirection: AssetTally; // idem, mas gale invertendo para a direcao contraria
         consideredLosses: number;
         missingCandle14: number;
       };
@@ -169,7 +172,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-            <div className="text-xs text-slate-500 mb-1">Gale mesma direção (PUT)</div>
+            <div className="text-xs text-slate-500 mb-1">Gale mesma direção ({ENTRY_DIRECTION})</div>
             <div className="flex items-center gap-3">
               <span className="text-emerald-400">{reentry.combinedSameDirection.wins}W</span>
               <span className="text-rose-400">{reentry.combinedSameDirection.losses}L</span>
@@ -180,7 +183,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
             </div>
           </div>
           <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-            <div className="text-xs text-slate-500 mb-1">Gale direção contrária (CALL)</div>
+            <div className="text-xs text-slate-500 mb-1">Gale direção contrária ({OPPOSITE_DIRECTION})</div>
             <div className="flex items-center gap-3">
               <span className="text-emerald-400">{reentry.combinedOppositeDirection.wins}W</span>
               <span className="text-rose-400">{reentry.combinedOppositeDirection.losses}L</span>

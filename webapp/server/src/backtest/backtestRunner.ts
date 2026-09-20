@@ -7,6 +7,7 @@ import {
   type BacktestRun,
   type BacktestSummary,
   type Candle,
+  type Direction,
   type PatternOccurrence,
   type TradeResult,
 } from '@polarium12c/shared';
@@ -24,18 +25,26 @@ function isoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
 }
 
-/** Ganha quando o candle fecha ACIMA da abertura — usado so para simular a direcao CALL (reentrada). */
+/** Ganha quando o candle fecha ACIMA da abertura — resultado de uma entrada CALL nesse candle. */
 function computeResultForCall(candle: Candle): TradeResult {
   if (candle.close > candle.open) return 'WIN';
   if (candle.close < candle.open) return 'LOSS';
   return 'DOJI';
 }
 
-/** Ganha quando o candle fecha ABAIXO da abertura — e a direcao real da 1a entrada (ENTRY_DIRECTION = PUT). */
+/** Ganha quando o candle fecha ABAIXO da abertura — resultado de uma entrada PUT nesse candle. */
 function computeResultForPut(candle: Candle): TradeResult {
   if (candle.close < candle.open) return 'WIN';
   if (candle.close > candle.open) return 'LOSS';
   return 'DOJI';
+}
+
+function computeResultForDirection(candle: Candle, direction: Direction): TradeResult {
+  return direction === 'CALL' ? computeResultForCall(candle) : computeResultForPut(candle);
+}
+
+function oppositeDirection(direction: Direction): Direction {
+  return direction === 'CALL' ? 'PUT' : 'CALL';
 }
 
 function tallyResults(results: TradeResult[]): { wins: number; losses: number; dojis: number } {
@@ -136,10 +145,10 @@ function buildSummary(
 
   const lossOccurrences = occurrences.filter((o) => o.result === 'LOSS');
   const lossesWithCandle14 = lossOccurrences.filter((o) => o.candle14);
-  // A 1a entrada e ENTRY_DIRECTION (PUT): "mesma direcao" no gale repete PUT, "contraria" vira CALL.
+  // "Mesma direcao" no gale repete ENTRY_DIRECTION; "contraria" inverte para a outra.
   const reentry: BacktestSummary['reentry'] = {
     combinedSameDirection: tallyResults(combineWithGale1(occurrences, ENTRY_DIRECTION)),
-    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, ENTRY_DIRECTION === 'PUT' ? 'CALL' : 'PUT')),
+    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, oppositeDirection(ENTRY_DIRECTION))),
     consideredLosses: lossOccurrences.length,
     missingCandle14: lossOccurrences.length - lossesWithCandle14.length,
   };
@@ -203,11 +212,7 @@ export async function runBacktest(
           wickPercentage11: tick.wickPercentage11,
           candle13,
           candle14,
-          result: candle13
-            ? ENTRY_DIRECTION === 'PUT'
-              ? computeResultForPut(candle13)
-              : computeResultForCall(candle13)
-            : undefined,
+          result: candle13 ? computeResultForDirection(candle13, ENTRY_DIRECTION) : undefined,
           isFirstOfDay: false, // marcado abaixo, apos ordenar globalmente
         });
       }

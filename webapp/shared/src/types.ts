@@ -80,15 +80,15 @@ export interface PatternProgress {
  * Uma ocorrencia completa do padrao (ao vivo ou em backtest).
  *
  * Nomes de campo (candle13/candle14) mantidos por estabilidade (schema do banco, tipos ja
- * em uso) mesmo apos a regra crescer de 12 para 13 velas — hoje sao, na pratica, a vela de
- * ENTRADA (14a real, sempre ENTRY_DIRECTION = PUT) e a vela SEGUINTE a ela (15a real, so
- * usada para simular o Gale 1). Ver strategyRule.ts para a regra completa e ENTRY_DIRECTION.
+ * em uso) mesmo apos a regra ter crescido varias vezes de tamanho — hoje sao, na pratica, a
+ * vela de ENTRADA (sempre na direcao ENTRY_DIRECTION) e a vela SEGUINTE a ela, so usada para
+ * simular o Gale 1. Ver strategyRule.ts para a regra completa e ENTRY_DIRECTION.
  */
 export interface PatternOccurrence {
   id: string;
   activeId: number;
-  occurredAt: number; // epoch seconds do fechamento da vela de confirmacao (hoje a 13a)
-  candles: Candle[]; // as velas do padrao (hoje 13), da mais antiga a mais nova
+  occurredAt: number; // epoch seconds do fechamento da vela de confirmacao
+  candles: Candle[]; // as velas do padrao (ver PATTERN_LENGTH), da mais antiga a mais nova
   wickPercentage11: number;
   candle13?: Candle; // a vela de ENTRADA — pode ser ausente em backtest se nao houver dado suficiente
   result?: TradeResult;
@@ -234,14 +234,15 @@ export interface BacktestSummary {
   perAsset: Record<number, { wins: number; losses: number; dojis: number }>;
   /**
    * Sempre calculado, em toda execucao (nao depende de nenhum toggle): resultado FINAL de
-   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre ENTRY_DIRECTION =
-   * PUT) ja ganhou, conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada
-   * no candle seguinte (candle14), simulada nas duas direcoes possiveis (repetindo PUT ou
-   * invertendo para CALL), para comparar as duas ao lado do resultado "so 1a entrada" (allOccurrences).
+   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre ENTRY_DIRECTION) ja
+   * ganhou, conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada no
+   * candle seguinte (candle14), simulada nas duas direcoes possiveis (repetindo ENTRY_DIRECTION
+   * ou invertendo para a outra), para comparar as duas ao lado do resultado "so 1a entrada"
+   * (allOccurrences).
    */
   reentry: {
-    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale repetindo PUT
-    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale invertendo para CALL
+    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale repetindo ENTRY_DIRECTION
+    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale invertendo para a direcao contraria
     consideredLosses: number; // quantas ocorrencias perderam a 1a entrada (candidatas ao gale)
     missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo) — excluidas dos combinados acima
   };
