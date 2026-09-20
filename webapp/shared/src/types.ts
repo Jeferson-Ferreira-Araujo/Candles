@@ -218,6 +218,8 @@ export interface BacktestSummary {
   allOccurrences: { wins: number; losses: number; dojis: number };
   firstOfDayOnly: { wins: number; losses: number; dojis: number };
   perDay: BacktestDaySummary[];
+  /** Consolidado por ativo (todas as ocorrencias, nao so a 1a do dia) — para ranquear os melhores ativos. */
+  perAsset: Record<number, { wins: number; losses: number; dojis: number }>;
 }
 
 /** Payload da conexao/broker exibido no cabecalho da aplicacao. */

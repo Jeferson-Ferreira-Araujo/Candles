@@ -88,11 +88,17 @@ function buildSummary(
     };
   });
 
+  const perAsset: BacktestSummary['perAsset'] = {};
+  for (const activeId of activeIds) {
+    perAsset[activeId] = tally(occurrences.filter((o) => o.activeId === activeId));
+  }
+
   return {
     runId,
     allOccurrences: tally(occurrences),
     firstOfDayOnly: tally(occurrences.filter((o) => o.isFirstOfDay)),
     perDay,
+    perAsset,
   };
 }
 

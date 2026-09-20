@@ -2,13 +2,16 @@ import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import type { AutoAnalysisState } from '../App.js';
 import { PatternCard } from '../components/PatternCard.js';
+import { AutoAnalysisCard } from '../components/AutoAnalysisCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
 import { api } from '../api.js';
 
 interface OutletCtx {
   events: AppEvent[];
   settings: Settings | null;
+  autoAnalysis: AutoAnalysisState;
 }
 
 function formatTime(ts: number): string {
@@ -34,7 +37,7 @@ function describeEvent(e: AppEvent): string {
 }
 
 export function MonitorPage() {
-  const { events, settings } = useOutletContext<OutletCtx>();
+  const { events, settings, autoAnalysis } = useOutletContext<OutletCtx>();
   const progressByActive = usePatternProgress(events);
   const activeIds = settings?.selectedActiveIds ?? [];
   const [assets, setAssets] = useState<AssetInfo[]>([]);
@@ -53,6 +56,8 @@ export function MonitorPage() {
         <h1 className="text-xl sm:text-2xl font-bold">Monitor de Ativos</h1>
         <p className="text-slate-400 text-sm">Acompanhamento em tempo real da formação da estratégia 12 Candles.</p>
       </div>
+
+      <AutoAnalysisCard state={autoAnalysis} />
 
       <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 flex items-center gap-4 sm:gap-6 flex-wrap">
         <div className="flex items-center gap-2 text-emerald-300 font-semibold">

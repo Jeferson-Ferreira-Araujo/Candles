@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import type { AppMode, DailyResult, Settings } from '@polarium12c/shared';
+import type { AutoAnalysisState } from '../App.js';
 import { Header } from './Header.js';
 import { api } from '../api.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
@@ -16,9 +17,10 @@ const NAV_ITEMS = [
 interface LayoutProps {
   requiresLogin: boolean;
   onLoggedOut: () => void;
+  autoAnalysis: AutoAnalysisState;
 }
 
-export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
+export function Layout({ requiresLogin, onLoggedOut, autoAnalysis }: LayoutProps) {
   const { connected, events } = useLiveSocket();
   const [health, setHealth] = useState<{ mode: AppMode; brokerAdapter: string } | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -106,7 +108,7 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
         </nav>
 
         <main className="flex-1 min-w-0 p-4 sm:p-6 pb-20 sm:pb-6 bg-slate-950 overflow-x-hidden">
-          <Outlet context={{ events, settings, refreshHeader: refresh }} />
+          <Outlet context={{ events, settings, refreshHeader: refresh, autoAnalysis }} />
         </main>
       </div>
 
