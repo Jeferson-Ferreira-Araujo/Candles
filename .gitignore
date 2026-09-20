@@ -1,0 +1,4 @@
+node_modules/
+
+# Dados coletados (gerados pelo collect.js) — não são código-fonte, não versionar.
+*.csv
