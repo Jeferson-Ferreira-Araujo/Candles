@@ -18,12 +18,13 @@ export type AutoAnalysisState =
       failedCount: number;
       elapsedMs: number;
       days: number;
+      /** Sempre presente (Gale 1 e calculado em toda execucao, sem depender de nenhuma configuracao). */
       reentry: {
-        sameDirection: AssetTally; // reentrada em CALL de novo
-        oppositeDirection: AssetTally; // reentrada em PUT
+        combinedSameDirection: AssetTally; // resultado final: 1a entrada, e se perder, gale em CALL
+        combinedOppositeDirection: AssetTally; // idem, mas gale em PUT
         consideredLosses: number;
         missingCandle14: number;
-      } | null; // null quando a opcao de reentrada estava desativada nesta rodada
+      };
     }
   | { status: 'error'; message: string };
 
@@ -117,22 +118,25 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
         )}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-        <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-          <div className="text-xs text-slate-500">Wins</div>
-          <div className="text-lg font-bold text-emerald-400">{overall.wins}</div>
-        </div>
-        <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-          <div className="text-xs text-slate-500">Losses</div>
-          <div className="text-lg font-bold text-rose-400">{overall.losses}</div>
-        </div>
-        <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-          <div className="text-xs text-slate-500">Doji</div>
-          <div className="text-lg font-bold text-slate-300">{overall.dojis}</div>
-        </div>
-        <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-          <div className="text-xs text-slate-500">Assertividade</div>
-          <div className="text-lg font-bold text-white">{formatPct(overallRate)}</div>
+      <div>
+        <div className="text-xs text-slate-500 mb-2">Só 1ª entrada (sem Gale)</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500">Wins</div>
+            <div className="text-lg font-bold text-emerald-400">{overall.wins}</div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500">Losses</div>
+            <div className="text-lg font-bold text-rose-400">{overall.losses}</div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500">Doji</div>
+            <div className="text-lg font-bold text-slate-300">{overall.dojis}</div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500">Assertividade</div>
+            <div className="text-lg font-bold text-white">{formatPct(overallRate)}</div>
+          </div>
         </div>
       </div>
 
@@ -157,36 +161,39 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
         </div>
       )}
 
-      {reentry && (
-        <div className="border-t border-sky-900 pt-4">
-          <div className="text-xs text-slate-500 mb-2">
-            Reentrada na vela seguinte, simulada sobre {reentry.consideredLosses} LOSS
-            {reentry.missingCandle14 > 0 && ` (${reentry.missingCandle14} sem vela seguinte disponível, ignoradas)`}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-            <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-              <div className="text-xs text-slate-500 mb-1">Reentrada CALL (mesma direção)</div>
-              <div className="flex items-center gap-3">
-                <span className="text-emerald-400">{reentry.sameDirection.wins}W</span>
-                <span className="text-rose-400">{reentry.sameDirection.losses}L</span>
-                {reentry.sameDirection.dojis > 0 && <span className="text-slate-400">{reentry.sameDirection.dojis}D</span>}
-                <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.sameDirection))}</span>
-              </div>
+      <div className="border-t border-sky-900 pt-4">
+        <div className="text-xs text-slate-500 mb-2">
+          Com Gale 1 — se a 1ª entrada perder, reentra na vela seguinte ({reentry.consideredLosses} LOSS
+          consideradas
+          {reentry.missingCandle14 > 0 && `, ${reentry.missingCandle14} sem vela seguinte disponível e ignoradas`})
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500 mb-1">Gale mesma direção (CALL)</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.combinedSameDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.combinedSameDirection.losses}L</span>
+              {reentry.combinedSameDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.combinedSameDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.combinedSameDirection))}</span>
             </div>
-            <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-              <div className="text-xs text-slate-500 mb-1">Reentrada PUT (direção contrária)</div>
-              <div className="flex items-center gap-3">
-                <span className="text-emerald-400">{reentry.oppositeDirection.wins}W</span>
-                <span className="text-rose-400">{reentry.oppositeDirection.losses}L</span>
-                {reentry.oppositeDirection.dojis > 0 && (
-                  <span className="text-slate-400">{reentry.oppositeDirection.dojis}D</span>
-                )}
-                <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.oppositeDirection))}</span>
-              </div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500 mb-1">Gale direção contrária (PUT)</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.combinedOppositeDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.combinedOppositeDirection.losses}L</span>
+              {reentry.combinedOppositeDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.combinedOppositeDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">
+                {formatPct(winRate(reentry.combinedOppositeDirection))}
+              </span>
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

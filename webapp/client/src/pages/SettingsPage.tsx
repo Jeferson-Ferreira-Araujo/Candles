@@ -95,23 +95,8 @@ export function SettingsPage() {
             className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2"
           />
           <span className="block text-xs text-slate-500 mt-1">
-            Usado pelo botão "Rodar análise" no Monitor (wins/losses/assertividade por ativo OTC digital).
-          </span>
-        </label>
-
-        <label className="text-sm flex items-start gap-2">
-          <input
-            type="checkbox"
-            checked={form.analysisReentryEnabled}
-            onChange={(e) => setForm({ ...form, analysisReentryEnabled: e.target.checked })}
-            className="mt-0.5"
-          />
-          <span>
-            Simular reentrada nos LOSS
-            <span className="block text-xs text-slate-500 mt-0.5">
-              Para cada ocorrência que perdeu, mostra também o resultado hipotético de uma reentrada na vela
-              seguinte — repetindo CALL (mesma direção) e invertendo para PUT (direção contrária).
-            </span>
+            Usado pelo botão "Rodar análise" no Monitor (wins/losses/assertividade por ativo OTC digital). Toda
+            execução já compara automaticamente "só 1ª entrada" com "usando Gale 1" (CALL e PUT).
           </span>
         </label>
       </section>

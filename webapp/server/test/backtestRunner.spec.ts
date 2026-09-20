@@ -104,25 +104,30 @@ describe('runBacktest', () => {
     expect(occurrences[0]!.result).toBe('LOSS');
   });
 
-  it('simula reentrada na vela seguinte a um LOSS: mesma direcao (CALL) e direcao contraria (PUT)', async () => {
+  it('Gale 1 combinado: WIN da 1a entrada passa direto, LOSS usa o resultado da reentrada (candle14)', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
-    const activeId = 76;
     const dayStart = safeDayStart();
 
-    // 12 velas do padrao + candle13 (LOSS, fecha abaixo da abertura) + candle14 controlada.
-    const candles = buildOccurrences(activeId, dayStart, 1, false);
-    const candle14From = candles[candles.length - 1]!.to;
-    candles.push(green(activeId, candle14From)); // fecha ACIMA da abertura
-    broker.seedCandles(activeId, candles);
+    // Ativo A: 1a entrada WIN — nao deveria nem olhar para candle14 (nem existe aqui).
+    const winnerActiveId = 81;
+    broker.seedCandles(winnerActiveId, buildOccurrences(winnerActiveId, dayStart, 1, true));
 
-    const { summary } = await runBacktest(db, broker, [activeId], 30);
+    // Ativo B: 1a entrada LOSS + candle14 controlada (fecha ACIMA da abertura).
+    const loserActiveId = 76;
+    const loserCandles = buildOccurrences(loserActiveId, dayStart, 1, false);
+    const candle14From = loserCandles[loserCandles.length - 1]!.to;
+    loserCandles.push(green(loserActiveId, candle14From));
+    broker.seedCandles(loserActiveId, loserCandles);
 
-    expect(summary.reentry.consideredLosses).toBe(1);
+    const { summary } = await runBacktest(db, broker, [winnerActiveId, loserActiveId], 30);
+
+    expect(summary.reentry.consideredLosses).toBe(1); // so o ativo B perdeu a 1a entrada
     expect(summary.reentry.missingCandle14).toBe(0);
-    // candle14 fechou em alta: reentrada CALL (mesma direcao) ganha, PUT (contraria) perde.
-    expect(summary.reentry.sameDirection).toEqual({ wins: 1, losses: 0, dojis: 0 });
-    expect(summary.reentry.oppositeDirection).toEqual({ wins: 0, losses: 1, dojis: 0 });
+    // Gale CALL: WIN direto (ativo A) + candle14 do ativo B fechou em alta -> WIN tambem = 2 wins.
+    expect(summary.reentry.combinedSameDirection).toEqual({ wins: 2, losses: 0, dojis: 0 });
+    // Gale PUT: WIN direto (ativo A) passa igual, mas o gale em PUT no candle14 em alta perde.
+    expect(summary.reentry.combinedOppositeDirection).toEqual({ wins: 1, losses: 1, dojis: 0 });
   });
 
   it('perDay inclui dias sem nenhum sinal (bucket NONE) para todo o periodo pedido', async () => {

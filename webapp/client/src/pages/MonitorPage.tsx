@@ -94,10 +94,11 @@ export function MonitorPage() {
     const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
     const perAsset: Record<number, AssetTally> = {};
     let failedCount = 0;
-    const reentryEnabled = settings?.analysisReentryEnabled ?? false;
+    // Gale 1 e sempre calculado (nao depende de nenhuma configuracao) para comparar direto
+    // com "so 1a entrada" (overall/perAsset acima).
     const reentry = {
-      sameDirection: { wins: 0, losses: 0, dojis: 0 } as AssetTally,
-      oppositeDirection: { wins: 0, losses: 0, dojis: 0 } as AssetTally,
+      combinedSameDirection: { wins: 0, losses: 0, dojis: 0 } as AssetTally,
+      combinedOppositeDirection: { wins: 0, losses: 0, dojis: 0 } as AssetTally,
       consideredLosses: 0,
       missingCandle14: 0,
     };
@@ -120,16 +121,14 @@ export function MonitorPage() {
         overall.losses += t.losses;
         overall.dojis += t.dojis;
 
-        if (reentryEnabled) {
-          reentry.sameDirection.wins += summary.reentry.sameDirection.wins;
-          reentry.sameDirection.losses += summary.reentry.sameDirection.losses;
-          reentry.sameDirection.dojis += summary.reentry.sameDirection.dojis;
-          reentry.oppositeDirection.wins += summary.reentry.oppositeDirection.wins;
-          reentry.oppositeDirection.losses += summary.reentry.oppositeDirection.losses;
-          reentry.oppositeDirection.dojis += summary.reentry.oppositeDirection.dojis;
-          reentry.consideredLosses += summary.reentry.consideredLosses;
-          reentry.missingCandle14 += summary.reentry.missingCandle14;
-        }
+        reentry.combinedSameDirection.wins += summary.reentry.combinedSameDirection.wins;
+        reentry.combinedSameDirection.losses += summary.reentry.combinedSameDirection.losses;
+        reentry.combinedSameDirection.dojis += summary.reentry.combinedSameDirection.dojis;
+        reentry.combinedOppositeDirection.wins += summary.reentry.combinedOppositeDirection.wins;
+        reentry.combinedOppositeDirection.losses += summary.reentry.combinedOppositeDirection.losses;
+        reentry.combinedOppositeDirection.dojis += summary.reentry.combinedOppositeDirection.dojis;
+        reentry.consideredLosses += summary.reentry.consideredLosses;
+        reentry.missingCandle14 += summary.reentry.missingCandle14;
       } catch {
         failedCount++;
       }
@@ -143,7 +142,7 @@ export function MonitorPage() {
       failedCount,
       elapsedMs: Date.now() - startedAt,
       days,
-      reentry: reentryEnabled ? reentry : null,
+      reentry,
     });
   }
 

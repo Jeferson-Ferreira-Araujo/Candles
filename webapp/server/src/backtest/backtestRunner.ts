@@ -48,6 +48,26 @@ function tallyResults(results: TradeResult[]): { wins: number; losses: number; d
   return { wins, losses, dojis };
 }
 
+/**
+ * Resultado FINAL de cada ocorrencia assumindo Gale 1: WIN direto se a 1a entrada ja ganhou;
+ * se perdeu, o resultado passa a ser o da reentrada no candle seguinte (candle14) na direcao
+ * pedida. Ocorrencias sem candle13 (sem 1a entrada avaliavel) ou cujo LOSS nao tem candle14
+ * disponivel (fim do periodo) ficam de fora — nao da pra simular o gale para elas.
+ */
+function combineWithGale1(occurrences: PatternOccurrence[], reentryDirection: 'CALL' | 'PUT'): TradeResult[] {
+  const results: TradeResult[] = [];
+  for (const o of occurrences) {
+    if (o.result === undefined) continue;
+    if (o.result !== 'LOSS') {
+      results.push(o.result);
+      continue;
+    }
+    if (!o.candle14) continue;
+    results.push(reentryDirection === 'CALL' ? computeResult(o.candle14) : computeResultForPut(o.candle14));
+  }
+  return results;
+}
+
 function tally(occs: PatternOccurrence[]): { wins: number; losses: number; dojis: number } {
   let wins = 0;
   let losses = 0;
@@ -115,8 +135,8 @@ function buildSummary(
   const lossOccurrences = occurrences.filter((o) => o.result === 'LOSS');
   const lossesWithCandle14 = lossOccurrences.filter((o) => o.candle14);
   const reentry: BacktestSummary['reentry'] = {
-    sameDirection: tallyResults(lossesWithCandle14.map((o) => computeResult(o.candle14!))),
-    oppositeDirection: tallyResults(lossesWithCandle14.map((o) => computeResultForPut(o.candle14!))),
+    combinedSameDirection: tallyResults(combineWithGale1(occurrences, 'CALL')),
+    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, 'PUT')),
     consideredLosses: lossOccurrences.length,
     missingCandle14: lossOccurrences.length - lossesWithCandle14.length,
   };

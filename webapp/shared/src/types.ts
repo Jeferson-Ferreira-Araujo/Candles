@@ -147,14 +147,6 @@ export interface Settings {
   robotActive: boolean;
   /** Quantidade de dias que a analise consolidada por ativo (botao no Monitor) olha para tras. */
   analysisDays: number;
-  /**
-   * So afeta a analise consolidada do Monitor (nao o robo ao vivo, que nao implementa
-   * reentrada — ver galeEnabled acima, que e outro campo, ainda nao ligado a nada).
-   * Quando ativo, para cada ocorrencia cujo entrada original (candle13, sempre CALL) deu
-   * LOSS, a analise tambem simula uma reentrada no candle seguinte (candle14): uma vez
-   * repetindo a mesma direcao (CALL) e outra na direcao contraria (PUT), e reporta os dois.
-   */
-  analysisReentryEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -168,7 +160,6 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'OBSERVATION',
   robotActive: false,
   analysisDays: 7,
-  analysisReentryEnabled: false,
 };
 
 export interface DailyResult {
@@ -235,16 +226,17 @@ export interface BacktestSummary {
   /** Consolidado por ativo (todas as ocorrencias, nao so a 1a do dia) — para ranquear os melhores ativos. */
   perAsset: Record<number, { wins: number; losses: number; dojis: number }>;
   /**
-   * Simulacao de reentrada: para cada ocorrencia cuja entrada original (candle13, sempre
-   * CALL) deu LOSS, calcula o resultado hipotetico de uma segunda entrada no candle
-   * seguinte (candle14) — uma vez repetindo CALL, outra vez invertendo para PUT. Sempre
-   * calculado (custa pouco); o cliente decide se mostra, com base em Settings.analysisReentryEnabled.
+   * Sempre calculado, em toda execucao (nao depende de nenhum toggle): resultado FINAL de
+   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre CALL) ja ganhou,
+   * conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada no candle
+   * seguinte (candle14), simulada nas duas direcoes possiveis (repetindo CALL ou invertendo
+   * para PUT), para comparar as duas ao lado do resultado "so 1a entrada" (allOccurrences).
    */
   reentry: {
-    sameDirection: { wins: number; losses: number; dojis: number }; // reentrada em CALL de novo
-    oppositeDirection: { wins: number; losses: number; dojis: number }; // reentrada em PUT
-    consideredLosses: number; // total de ocorrencias LOSS na janela (denominador de contexto)
-    missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo)
+    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale em CALL
+    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale em PUT
+    consideredLosses: number; // quantas ocorrencias perderam a 1a entrada (candidatas ao gale)
+    missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo) — excluidas dos combinados acima
   };
 }
 
