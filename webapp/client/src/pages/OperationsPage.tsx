@@ -37,13 +37,13 @@ export function OperationsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Operações</h1>
+        <h1 className="text-xl sm:text-2xl font-bold">Operações</h1>
         <p className="text-slate-400 text-sm">Sinais confirmados e resultado de cada ordem enviada (modo DEMO).</p>
       </div>
 
       {error && <div className="rounded-lg border border-rose-800 bg-rose-950/50 p-3 text-sm text-rose-300">{error}</div>}
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 overflow-x-auto">
         {orders === null ? (
           <div className="text-sm text-slate-500">Carregando...</div>
         ) : orders.length === 0 ? (
@@ -52,7 +52,7 @@ export function OperationsPage() {
             com o robô ativo e todas as verificações de segurança aprovadas.
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-slate-400 border-b border-slate-800">
                 <th className="py-2 pr-4">Solicitada em</th>

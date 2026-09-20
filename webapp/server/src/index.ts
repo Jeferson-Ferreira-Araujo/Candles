@@ -5,7 +5,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
-import type { AppEvent } from '@polarium12c/shared';
+import type { AppEvent, AssetInfo } from '@polarium12c/shared';
 import { openDb } from './db/db.js';
 import {
   loadSettings,
@@ -175,6 +175,23 @@ app.get('/api/balances', async (_req, res) => {
   try {
     const balances = await brokerManager.get().getBalances();
     res.json(balances);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Lista de ativos (nome/OTC/tipos) muda raramente — cache curto em memoria evita repetir
+// varias chamadas ao SDK a cada vez que o usuario abre o seletor de ativos.
+let assetsCache: { at: number; data: AssetInfo[] } | null = null;
+const ASSETS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+app.get('/api/assets', async (_req, res) => {
+  try {
+    if (!assetsCache || Date.now() - assetsCache.at > ASSETS_CACHE_TTL_MS) {
+      const data = await brokerManager.get().listAssets();
+      assetsCache = { at: Date.now(), data };
+    }
+    res.json(assetsCache!.data);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

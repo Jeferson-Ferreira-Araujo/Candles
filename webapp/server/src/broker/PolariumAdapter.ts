@@ -5,7 +5,7 @@ import {
   BalanceType,
   type Candle as SdkCandle,
 } from '@quadcode-tech/client-sdk-js';
-import type { Candle, Direction } from '@polarium12c/shared';
+import type { AssetInfo, AssetKind, Candle, Direction } from '@polarium12c/shared';
 import {
   NotImplementedError,
   type BrokerAdapter,
@@ -85,6 +85,59 @@ export class PolariumAdapter implements BrokerAdapter {
       amount: b.amount,
       currency: b.currency,
     }));
+  }
+
+  /**
+   * Lista ativos combinando os 4 catalogos confirmados do SDK (binary/turbo/blitz tem
+   * `{id, ticker}`; digital tem `{activeId, name}` via getUnderlyingsAvailableForTradingAt).
+   * `isOtc` e inferido do proprio nome/ticker conter "OTC" — convencao ja observada nos
+   * dados reais da Polarium nesta mesma base de codigo (ex.: "GBPUSD-OTC"), nao um campo
+   * separado do SDK. Cada catalogo e buscado isoladamente: se um tipo de opcao nao estiver
+   * disponivel para a conta, os outros ainda aparecem.
+   */
+  async listAssets(): Promise<AssetInfo[]> {
+    const sdk = this.requireSdk();
+    const now = sdk.currentTime();
+    const byId = new Map<number, AssetInfo>();
+
+    const addKind = (id: number, name: string, kind: AssetKind) => {
+      const existing = byId.get(id);
+      if (existing) {
+        if (!existing.kinds.includes(kind)) existing.kinds.push(kind);
+        return;
+      }
+      byId.set(id, { id, name, isOtc: name.toUpperCase().includes('OTC'), kinds: [kind] });
+    };
+
+    try {
+      const binary = await sdk.binaryOptions();
+      for (const a of binary.getActives()) addKind(a.id, a.ticker, 'binary');
+    } catch {
+      // tipo de opcao pode nao estar disponivel para esta conta — segue sem ele
+    }
+
+    try {
+      const turbo = await sdk.turboOptions();
+      for (const a of turbo.getActives()) addKind(a.id, a.ticker, 'turbo');
+    } catch {
+      // idem
+    }
+
+    try {
+      const blitz = await sdk.blitzOptions();
+      for (const a of blitz.getActives()) addKind(a.id, a.ticker, 'blitz');
+    } catch {
+      // idem
+    }
+
+    try {
+      const digital = await sdk.digitalOptions();
+      for (const u of digital.getUnderlyingsAvailableForTradingAt(now)) addKind(u.activeId, u.name, 'digital');
+    } catch {
+      // idem
+    }
+
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private async getTradingBalance() {

@@ -19,6 +19,16 @@ export interface Candle {
 
 export type CandleColor = 'G' | 'R' | 'DOJI';
 
+export type AssetKind = 'binary' | 'turbo' | 'blitz' | 'digital';
+
+/** Ativo negociavel, para preencher os seletores de busca por nome no lugar do ID cru. */
+export interface AssetInfo {
+  id: number;
+  name: string; // ticker/nome como o SDK devolve, ex.: "GBPUSD-OTC"
+  isOtc: boolean;
+  kinds: AssetKind[]; // em quais tipos de opcao esse ativo aparece (pode ser mais de um)
+}
+
 export function candleColor(c: Pick<Candle, 'open' | 'close'>): CandleColor {
   if (c.close > c.open) return 'G';
   if (c.close < c.open) return 'R';

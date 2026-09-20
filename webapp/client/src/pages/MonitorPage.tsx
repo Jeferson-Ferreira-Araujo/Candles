@@ -1,8 +1,10 @@
+import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import type { AppEvent, Settings } from '@polarium12c/shared';
+import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
 import { PatternCard } from '../components/PatternCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
+import { api } from '../api.js';
 
 interface OutletCtx {
   events: AppEvent[];
@@ -35,20 +37,29 @@ export function MonitorPage() {
   const { events, settings } = useOutletContext<OutletCtx>();
   const progressByActive = usePatternProgress(events);
   const activeIds = settings?.selectedActiveIds ?? [];
+  const [assets, setAssets] = useState<AssetInfo[]>([]);
+
+  useEffect(() => {
+    api.getAssets().then(setAssets).catch(() => {});
+  }, []);
+
+  function nameOf(id: number): string {
+    return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Monitor de Ativos</h1>
+        <h1 className="text-xl sm:text-2xl font-bold">Monitor de Ativos</h1>
         <p className="text-slate-400 text-sm">Acompanhamento em tempo real da formação da estratégia 12 Candles.</p>
       </div>
 
-      <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 flex items-center gap-6 flex-wrap">
+      <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 flex items-center gap-4 sm:gap-6 flex-wrap">
         <div className="flex items-center gap-2 text-emerald-300 font-semibold">
           <span>⚡</span> Estratégia ativa
         </div>
         <div className="text-sm text-slate-300">Padrão:</div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {TWELVE_CANDLES_PATTERN.map((c, i) => (
             <span
               key={i}
@@ -60,7 +71,7 @@ export function MonitorPage() {
             </span>
           ))}
         </div>
-        <div className="ml-auto text-sm text-slate-300">
+        <div className="sm:ml-auto text-sm text-slate-300">
           Após a 12ª vela fechar: <span className="font-semibold text-white">Entrar CALL na 13ª</span>
         </div>
       </div>
@@ -73,7 +84,7 @@ export function MonitorPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {activeIds.map((activeId) => (
-            <PatternCard key={activeId} activeId={activeId} label={`Ativo ${activeId}`} progress={progressByActive.get(activeId)} />
+            <PatternCard key={activeId} activeId={activeId} label={nameOf(activeId)} progress={progressByActive.get(activeId)} />
           ))}
         </div>
       )}

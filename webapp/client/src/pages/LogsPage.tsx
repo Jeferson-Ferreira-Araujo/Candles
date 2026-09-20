@@ -26,17 +26,17 @@ export function LogsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Logs</h1>
+        <h1 className="text-xl sm:text-2xl font-bold">Logs</h1>
         <p className="text-slate-400 text-sm">Eventos do sistema: fechamento de velas, progresso, sinais, ordens e proteções.</p>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 overflow-x-auto">
         {loading ? (
           <div className="text-sm text-slate-500">Carregando...</div>
         ) : events.length === 0 ? (
           <div className="text-sm text-slate-500">Nenhum evento registrado ainda.</div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="text-left text-slate-400 border-b border-slate-800">
                 <th className="py-2 pr-4">Data/Hora</th>

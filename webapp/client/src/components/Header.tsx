@@ -36,15 +36,15 @@ export function Header({
   const maxOps = settings?.maxOperationsPerDay ?? null;
 
   return (
-    <header className="flex items-center gap-6 px-6 py-3 border-b border-slate-800 bg-slate-950">
+    <header className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-6 sm:py-3 border-b border-slate-800 bg-slate-950">
       <div>
-        <div className="font-bold text-lg leading-none">12 Candles</div>
+        <div className="font-bold text-base sm:text-lg leading-none">12 Candles</div>
         <div className="text-xs text-slate-500">M1 · {brokerAdapter === 'polarium' ? 'Polarium' : 'Mock (dev)'}</div>
       </div>
 
       <div className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-        <span className="text-sm text-slate-300">{connected ? 'Conectado' : 'Desconectado'}</span>
+        <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${connected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+        <span className="text-sm text-slate-300 whitespace-nowrap">{connected ? 'Conectado' : 'Desconectado'}</span>
       </div>
 
       <div>
@@ -61,38 +61,42 @@ export function Header({
 
       <div>
         <div className="text-xs text-slate-500">Saldo</div>
-        <div className="font-semibold">{balance === null ? '—' : balance.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' })}</div>
+        <div className="font-semibold whitespace-nowrap">
+          {balance === null ? '—' : balance.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' })}
+        </div>
       </div>
 
       <div>
         <div className="text-xs text-slate-500">Resultado do dia</div>
-        <div className={`font-semibold ${pnlColor}`}>
+        <div className={`font-semibold whitespace-nowrap ${pnlColor}`}>
           {dailyResult ? pnl.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : '—'}
         </div>
       </div>
 
       <div>
         <div className="text-xs text-slate-500">Operações hoje</div>
-        <div className="font-semibold">
+        <div className="font-semibold whitespace-nowrap">
           {dailyResult?.operationsCount ?? 0} {maxOps !== null ? `/ ${maxOps}` : ''}
         </div>
       </div>
 
-      <button
-        onClick={onToggleRobot}
-        className={`${showLogout ? '' : 'ml-auto'} rounded-lg bg-rose-700 hover:bg-rose-600 transition-colors px-4 py-2 font-semibold text-sm`}
-      >
-        {robotActive ? '■ Parar robô' : '▶ Ligar robô'}
-      </button>
-
-      {showLogout && (
+      <div className="flex gap-2 w-full sm:w-auto sm:ml-auto justify-end order-last sm:order-none">
         <button
-          onClick={onLogout}
-          className="ml-auto rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors px-4 py-2 font-semibold text-sm text-slate-300"
+          onClick={onToggleRobot}
+          className="rounded-lg bg-rose-700 hover:bg-rose-600 transition-colors px-3 py-1.5 sm:px-4 sm:py-2 font-semibold text-xs sm:text-sm whitespace-nowrap"
         >
-          Sair
+          {robotActive ? '■ Parar robô' : '▶ Ligar robô'}
         </button>
-      )}
+
+        {showLogout && (
+          <button
+            onClick={onLogout}
+            className="rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors px-3 py-1.5 sm:px-4 sm:py-2 font-semibold text-xs sm:text-sm text-slate-300"
+          >
+            Sair
+          </button>
+        )}
+      </div>
     </header>
   );
 }

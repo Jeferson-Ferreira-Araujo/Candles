@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppMode, Settings } from '@polarium12c/shared';
 import { api } from '../api.js';
+import { AssetPicker } from '../components/AssetPicker.js';
 
 interface OutletCtx {
   settings: Settings | null;
@@ -17,10 +18,15 @@ const MODE_OPTIONS: { value: AppMode; label: string; hint: string }[] = [
 export function SettingsPage() {
   const { settings, refreshHeader } = useOutletContext<OutletCtx>();
   const [form, setForm] = useState<Settings | null>(settings);
-  const [activeIdsInput, setActiveIdsInput] = useState(() => (settings?.selectedActiveIds ?? []).join(', '));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // Layout busca settings de forma assincrona: se esta pagina montar antes disso resolver,
+  // form ficaria preso em null para sempre sem este efeito.
+  useEffect(() => {
+    if (settings && !form) setForm(settings);
+  }, [settings, form]);
 
   if (!form) return <div className="text-slate-400">Carregando...</div>;
 
@@ -29,11 +35,7 @@ export function SettingsPage() {
     setError(null);
     setSaving(true);
     try {
-      const selectedActiveIds = activeIdsInput
-        .split(',')
-        .map((s) => Number(s.trim()))
-        .filter((n) => Number.isFinite(n));
-      const next = await api.saveSettings({ ...form, selectedActiveIds });
+      const next = await api.saveSettings(form);
       setForm(next);
       setSavedAt(Date.now());
       await refreshHeader();
@@ -47,7 +49,7 @@ export function SettingsPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-bold">Configurações</h1>
+        <h1 className="text-xl sm:text-2xl font-bold">Configurações</h1>
         <p className="text-slate-400 text-sm">Regras de risco e seleção de ativos. Ao atingir qualquer limite, o robô bloqueia novas operações.</p>
       </div>
 
@@ -74,18 +76,15 @@ export function SettingsPage() {
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">
         <h2 className="font-semibold">Ativos monitorados</h2>
-        <input
-          value={activeIdsInput}
-          onChange={(e) => setActiveIdsInput(e.target.value)}
-          placeholder="IDs separados por vírgula, ex.: 81, 76, 2298"
-          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm"
+        <AssetPicker
+          value={form.selectedActiveIds}
+          onChange={(selectedActiveIds) => setForm({ ...form, selectedActiveIds })}
         />
-        <p className="text-xs text-slate-500">Use o script `npm run list-actives` do coletor de candles para descobrir os IDs.</p>
       </section>
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">
         <h2 className="font-semibold">Entrada e Gale</h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <label className="text-sm">
             <span className="block text-slate-400 mb-1">Valor da entrada (mínimo R$5,00)</span>
             <input
@@ -110,7 +109,7 @@ export function SettingsPage() {
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">
         <h2 className="font-semibold">Limites diários</h2>
-        <div className="grid grid-cols-3 gap-4 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
           <label>
             <span className="block text-slate-400 mb-1">Stop Win diário</span>
             <input

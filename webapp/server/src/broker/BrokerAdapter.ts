@@ -1,4 +1,4 @@
-import type { Candle, Direction, TradeResult } from '@polarium12c/shared';
+import type { AssetInfo, Candle, Direction, TradeResult } from '@polarium12c/shared';
 
 /**
  * Contrato unico entre a aplicacao e qualquer corretora. Tudo que a aplicacao sabe sobre
@@ -52,6 +52,9 @@ export interface BrokerAdapter {
   authenticate(): Promise<void>;
 
   getBalances(): Promise<BrokerBalance[]>;
+
+  /** Lista de ativos disponiveis (nome/ticker, se e OTC, em quais tipos de opcao aparece) — para preencher seletores de busca por nome. */
+  listAssets(): Promise<AssetInfo[]>;
 
   getHistoricalCandles(activeId: number, size: number, from: number, to: number): Promise<Candle[]>;
 

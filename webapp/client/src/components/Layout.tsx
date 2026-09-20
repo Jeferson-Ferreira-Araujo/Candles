@@ -77,8 +77,9 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
         showLogout={requiresLogin}
         onLogout={logout}
       />
-      <div className="flex flex-1">
-        <nav className="w-56 border-r border-slate-800 bg-slate-950 p-3 space-y-1">
+      <div className="flex flex-1 min-w-0">
+        {/* Sidebar completa: so em telas >= sm. Em telas menores, vira barra inferior. */}
+        <nav className="hidden sm:block w-56 shrink-0 border-r border-slate-800 bg-slate-950 p-3 space-y-1">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
@@ -103,10 +104,30 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
             Disciplina gera consistência.
           </div>
         </nav>
-        <main className="flex-1 p-6 bg-slate-950">
+
+        <main className="flex-1 min-w-0 p-4 sm:p-6 pb-20 sm:pb-6 bg-slate-950 overflow-x-hidden">
           <Outlet context={{ events, settings, refreshHeader: refresh }} />
         </main>
       </div>
+
+      {/* Barra de navegacao inferior: so em telas < sm (celular). */}
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950 border-t border-slate-800 flex">
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.to === '/'}
+            className={({ isActive }) =>
+              `flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] ${
+                isActive ? 'text-white' : 'text-slate-500'
+              }`
+            }
+          >
+            <span className="text-base leading-none">{item.icon}</span>
+            <span className="leading-none">{item.label.split(' ')[0]}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }

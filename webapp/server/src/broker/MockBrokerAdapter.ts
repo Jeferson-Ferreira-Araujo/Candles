@@ -1,4 +1,4 @@
-import type { Candle } from '@polarium12c/shared';
+import type { AssetInfo, Candle } from '@polarium12c/shared';
 import type {
   BrokerAdapter,
   BrokerBalance,
@@ -20,7 +20,15 @@ export interface MockBrokerConfig {
   /** Payout fixo simulado (fracao). Nao deve ser usado como fonte de verdade para a Polarium real. */
   payout: number;
   initialBalance: number;
+  assets: AssetInfo[];
 }
+
+const DEFAULT_MOCK_ASSETS: AssetInfo[] = [
+  { id: 81, name: 'GBPUSD-OTC', isOtc: true, kinds: ['digital'] },
+  { id: 76, name: 'EURUSD-OTC', isOtc: true, kinds: ['digital', 'binary'] },
+  { id: 1, name: 'EURUSD', isOtc: false, kinds: ['binary', 'turbo'] },
+  { id: 2298, name: 'EXEMPLO-OTC', isOtc: true, kinds: ['digital'] },
+];
 
 /**
  * Broker fake para desenvolvimento/teste, sem nenhuma chamada de rede.
@@ -37,7 +45,11 @@ export class MockBrokerAdapter implements BrokerAdapter {
   private connected = false;
 
   constructor(config: Partial<MockBrokerConfig> = {}) {
-    this.config = { payout: config.payout ?? 0.85, initialBalance: config.initialBalance ?? 1000 };
+    this.config = {
+      payout: config.payout ?? 0.85,
+      initialBalance: config.initialBalance ?? 1000,
+      assets: config.assets ?? DEFAULT_MOCK_ASSETS,
+    };
     this.balance = this.config.initialBalance;
   }
 
@@ -83,6 +95,11 @@ export class MockBrokerAdapter implements BrokerAdapter {
   async getBalances(): Promise<BrokerBalance[]> {
     this.assertConnected();
     return [{ id: 'mock-demo', type: 'demo', amount: this.balance, currency: 'USD' }];
+  }
+
+  async listAssets(): Promise<AssetInfo[]> {
+    this.assertConnected();
+    return this.config.assets;
   }
 
   async getHistoricalCandles(activeId: number, size: number, from: number, to: number): Promise<Candle[]> {

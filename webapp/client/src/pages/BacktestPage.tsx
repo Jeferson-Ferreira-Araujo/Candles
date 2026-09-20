@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import type { BacktestSummary, PatternOccurrence, Settings } from '@polarium12c/shared';
+import type { AssetInfo, BacktestSummary, PatternOccurrence, Settings } from '@polarium12c/shared';
 import { api } from '../api.js';
+import { AssetPicker } from '../components/AssetPicker.js';
 
 interface OutletCtx {
   settings: Settings | null;
@@ -15,17 +16,21 @@ function tallyLabel(t: { wins: number; losses: number; dojis: number }): string 
 
 export function BacktestPage() {
   const { settings } = useOutletContext<OutletCtx>();
-  const [activeIdsInput, setActiveIdsInput] = useState(() => (settings?.selectedActiveIds ?? []).join(', '));
+  const [activeIds, setActiveIds] = useState<number[]>(() => settings?.selectedActiveIds ?? []);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<BacktestSummary | null>(null);
   const [occurrences, setOccurrences] = useState<PatternOccurrence[]>([]);
+  const [assets, setAssets] = useState<AssetInfo[]>([]);
 
-  const activeIds = activeIdsInput
-    .split(',')
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n));
+  useEffect(() => {
+    api.getAssets().then(setAssets).catch(() => {});
+  }, []);
+
+  function nameOf(id: number): string {
+    return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
+  }
 
   async function run() {
     setError(null);
@@ -44,40 +49,37 @@ export function BacktestPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Validação 30D</h1>
+        <h1 className="text-xl sm:text-2xl font-bold">Validação 30D</h1>
         <p className="text-slate-400 text-sm">
           Roda a estratégia "12 Candles" sobre o histórico M1 e registra todas as ocorrências. Histórico de
           desenvolvimento: 14/14 — isso <span className="font-semibold">não é garantia futura</span>.
         </p>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 flex flex-wrap items-end gap-4">
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Ativos (IDs separados por vírgula)</label>
-          <input
-            value={activeIdsInput}
-            onChange={(e) => setActiveIdsInput(e.target.value)}
-            placeholder="ex.: 81, 76, 2298"
-            className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm w-72"
-          />
+          <label className="block text-xs text-slate-400 mb-1">Ativos</label>
+          <AssetPicker value={activeIds} onChange={setActiveIds} />
         </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">Dias</label>
-          <input
-            type="number"
-            min={1}
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm w-24"
-          />
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Dias</label>
+            <input
+              type="number"
+              min={1}
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm w-24"
+            />
+          </div>
+          <button
+            onClick={run}
+            disabled={loading || activeIds.length === 0}
+            className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
+          >
+            {loading ? 'Rodando...' : 'Rodar backtest'}
+          </button>
         </div>
-        <button
-          onClick={run}
-          disabled={loading || activeIds.length === 0}
-          className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
-        >
-          {loading ? 'Rodando...' : 'Rodar backtest'}
-        </button>
       </div>
 
       {error && <div className="rounded-lg border border-rose-800 bg-rose-950/50 p-3 text-sm text-rose-300">{error}</div>}
@@ -101,8 +103,8 @@ export function BacktestPage() {
                 <tr className="text-left text-slate-400 border-b border-slate-800">
                   <th className="py-2 pr-4">Data</th>
                   {activeIds.map((id) => (
-                    <th key={id} className="py-2 pr-4">
-                      Ativo {id}
+                    <th key={id} className="py-2 pr-4 whitespace-nowrap">
+                      {nameOf(id)}
                     </th>
                   ))}
                   <th className="py-2 pr-4">Total</th>
@@ -112,14 +114,14 @@ export function BacktestPage() {
               <tbody>
                 {summary.perDay.map((day) => (
                   <tr key={day.date} className="border-b border-slate-900">
-                    <td className="py-1.5 pr-4 text-slate-300">{day.date}</td>
+                    <td className="py-1.5 pr-4 text-slate-300 whitespace-nowrap">{day.date}</td>
                     {activeIds.map((id) => (
                       <td key={id} className="py-1.5 pr-4">
                         {day.perActive[id] ?? 0}
                       </td>
                     ))}
                     <td className="py-1.5 pr-4 font-semibold">{day.total}</td>
-                    <td className="py-1.5 pr-4 text-xs text-slate-500">
+                    <td className="py-1.5 pr-4 text-xs text-slate-500 whitespace-nowrap">
                       {day.multipleDifferentActives && 'sinais em ativos diferentes '}
                       {day.multipleInSameActive && 'múltiplos no mesmo ativo '}
                       {day.bucket === 'NONE' && 'sem sinal'}
@@ -132,12 +134,12 @@ export function BacktestPage() {
 
           <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
             <div className="font-semibold mb-2">Ocorrências ({occurrences.length})</div>
-            <div className="max-h-80 overflow-y-auto text-sm space-y-1">
+            <div className="max-h-80 overflow-y-auto overflow-x-auto text-sm space-y-1">
               {occurrences.map((occ) => (
-                <div key={occ.id} className="flex gap-3 text-slate-300">
+                <div key={occ.id} className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
                   <span className="text-slate-600 w-40 shrink-0">{new Date(occ.occurredAt * 1000).toLocaleString('pt-BR')}</span>
-                  <span className="w-20">Ativo {occ.activeId}</span>
-                  <span className="w-20">pavio {(occ.wickPercentage11 * 100).toFixed(1)}%</span>
+                  <span className="w-28 shrink-0">{nameOf(occ.activeId)}</span>
+                  <span className="w-20 shrink-0">pavio {(occ.wickPercentage11 * 100).toFixed(1)}%</span>
                   <span
                     className={
                       occ.result === 'WIN' ? 'text-emerald-400' : occ.result === 'LOSS' ? 'text-rose-400' : 'text-slate-400'
