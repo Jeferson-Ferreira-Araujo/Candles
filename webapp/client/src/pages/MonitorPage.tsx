@@ -12,7 +12,7 @@ interface OutletCtx {
   settings: Settings | null;
 }
 
-const AUTO_ANALYSIS_DAYS = 7;
+const DEFAULT_ANALYSIS_DAYS = 7;
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -73,6 +73,7 @@ export function MonitorPage() {
   // espera indeterminada. Erro em um ativo isolado (ex.: ativo invalido) nao aborta os
   // demais, so e contado e ignorado no resultado final.
   async function runAutoAnalysis() {
+    const days = settings?.analysisDays ?? DEFAULT_ANALYSIS_DAYS;
     const allAssets = await api.getAssets().catch(() => [] as AssetInfo[]);
     if (allAssets.length === 0) {
       setAutoAnalysis({ status: 'empty' });
@@ -81,7 +82,14 @@ export function MonitorPage() {
 
     const startedAt = Date.now();
     analysisStartedAt.current = startedAt;
-    setAutoAnalysis({ status: 'loading', completed: 0, total: allAssets.length, currentAssetName: allAssets[0]!.name, elapsedMs: 0 });
+    setAutoAnalysis({
+      status: 'loading',
+      completed: 0,
+      total: allAssets.length,
+      currentAssetName: allAssets[0]!.name,
+      elapsedMs: 0,
+      days,
+    });
 
     const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
     const perAsset: Record<number, AssetTally> = {};
@@ -95,9 +103,10 @@ export function MonitorPage() {
         total: allAssets.length,
         currentAssetName: asset.name,
         elapsedMs: Date.now() - startedAt,
+        days,
       });
       try {
-        const { summary } = await api.runBacktest([asset.id], AUTO_ANALYSIS_DAYS);
+        const { summary } = await api.runBacktest([asset.id], days);
         const t = summary.perAsset[asset.id] ?? summary.allOccurrences;
         perAsset[asset.id] = t;
         overall.wins += t.wins;
@@ -108,7 +117,7 @@ export function MonitorPage() {
       }
     }
 
-    setAutoAnalysis({ status: 'done', overall, perAsset, assets: allAssets, failedCount, elapsedMs: Date.now() - startedAt });
+    setAutoAnalysis({ status: 'done', overall, perAsset, assets: allAssets, failedCount, elapsedMs: Date.now() - startedAt, days });
   }
 
   return (
@@ -120,8 +129,11 @@ export function MonitorPage() {
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <div className="font-semibold">Análise dos últimos 7 dias</div>
-          <p className="text-xs text-slate-500 mt-0.5">Consolida wins, losses e assertividade por ativo OTC digital.</p>
+          <div className="font-semibold">Análise dos últimos {settings?.analysisDays ?? DEFAULT_ANALYSIS_DAYS} dias</div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Consolida wins, losses e assertividade por ativo OTC digital. Ajuste o período em{' '}
+            <span className="text-slate-300">Configurações</span>.
+          </p>
         </div>
         <button
           onClick={runAutoAnalysis}

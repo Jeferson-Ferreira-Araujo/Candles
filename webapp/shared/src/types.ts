@@ -143,6 +143,8 @@ export interface Settings {
    * DEVE checar este campo antes de operar (regra: na duvida, nao operar).
    */
   robotActive: boolean;
+  /** Quantidade de dias que a analise consolidada por ativo (botao no Monitor) olha para tras. */
+  analysisDays: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -155,6 +157,7 @@ export const DEFAULT_SETTINGS: Settings = {
   selectedActiveIds: [],
   mode: 'OBSERVATION',
   robotActive: false,
+  analysisDays: 7,
 };
 
 export interface DailyResult {

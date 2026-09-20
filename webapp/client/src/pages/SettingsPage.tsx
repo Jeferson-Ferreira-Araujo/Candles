@@ -83,6 +83,24 @@ export function SettingsPage() {
       </section>
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">
+        <h2 className="font-semibold">Análise consolidada (Monitor)</h2>
+        <label className="text-sm block max-w-xs">
+          <span className="block text-slate-400 mb-1">Dias para trás na análise</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={form.analysisDays}
+            onChange={(e) => setForm({ ...form, analysisDays: Math.max(1, Number(e.target.value)) })}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2"
+          />
+          <span className="block text-xs text-slate-500 mt-1">
+            Usado pelo botão "Rodar análise" no Monitor (wins/losses/assertividade por ativo OTC digital).
+          </span>
+        </label>
+      </section>
+
+      <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">
         <h2 className="font-semibold">Entrada e Gale</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <label className="text-sm">

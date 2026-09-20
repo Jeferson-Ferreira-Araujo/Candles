@@ -8,7 +8,7 @@ export interface AssetTally {
 
 export type AutoAnalysisState =
   | { status: 'idle' }
-  | { status: 'loading'; completed: number; total: number; currentAssetName: string | null; elapsedMs: number }
+  | { status: 'loading'; completed: number; total: number; currentAssetName: string | null; elapsedMs: number; days: number }
   | { status: 'empty' }
   | {
       status: 'done';
@@ -17,6 +17,7 @@ export type AutoAnalysisState =
       assets: AssetInfo[];
       failedCount: number;
       elapsedMs: number;
+      days: number;
     }
   | { status: 'error'; message: string };
 
@@ -39,8 +40,9 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Consolidado (nao dia-a-dia) dos ultimos 7 dias da estrategia 12 Candles sobre todos os
- * ativos OTC digital disponiveis — disparado pelo botao em MonitorPage.
+ * Consolidado (nao dia-a-dia) da estrategia 12 Candles sobre todos os ativos OTC digital
+ * disponiveis, na janela configurada em Settings.analysisDays — disparado pelo botao em
+ * MonitorPage.
  */
 export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
   if (state.status === 'idle') return null;
@@ -52,7 +54,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-2">
         <div className="flex items-center justify-between text-sm text-slate-300">
           <span>
-            Analisando os últimos 7 dias{state.currentAssetName ? ` — ${state.currentAssetName}` : '...'}
+            Analisando os últimos {state.days} dias{state.currentAssetName ? ` — ${state.currentAssetName}` : '...'}
           </span>
           <span className="text-slate-500 shrink-0">
             {state.completed}/{state.total}
@@ -85,7 +87,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
     );
   }
 
-  const { overall, perAsset, assets, failedCount, elapsedMs } = state;
+  const { overall, perAsset, assets, failedCount, elapsedMs, days } = state;
   const nameOf = (id: number) => assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   const overallRate = winRate(overall);
 
@@ -97,7 +99,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
   return (
     <div className="rounded-xl border border-sky-800 bg-sky-950/30 p-4 space-y-4">
       <div>
-        <div className="font-semibold text-sky-200">Análise automática — últimos 7 dias (OTC digital)</div>
+        <div className="font-semibold text-sky-200">Análise automática — últimos {days} dias (OTC digital)</div>
         <p className="text-xs text-slate-400 mt-0.5">
           Sobre {assets.length} ativos OTC digital disponíveis, em {formatDuration(elapsedMs)}. Consolidado — não é
           garantia futura.
@@ -129,7 +131,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
       </div>
 
       {ranked.length === 0 ? (
-        <div className="text-sm text-slate-500">Nenhum sinal do padrão 12 Candles nos últimos 7 dias.</div>
+        <div className="text-sm text-slate-500">Nenhum sinal do padrão 12 Candles nos últimos {days} dias.</div>
       ) : (
         <div>
           <div className="text-xs text-slate-500 mb-2">Melhores ativos ({ranked.length} com sinal no período)</div>
