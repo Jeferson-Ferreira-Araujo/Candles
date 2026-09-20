@@ -1,4 +1,5 @@
 import type { PatternDisplayState, PatternProgress } from '@polarium12c/shared';
+import { PATTERN_LENGTH } from '@polarium12c/shared';
 import { MiniCandles } from './MiniCandles.js';
 
 interface Props {
@@ -38,7 +39,7 @@ export function PatternCard({ activeId, label, progress }: Props) {
 
       <div className="flex items-baseline gap-2 mb-3">
         <span className="text-3xl font-bold">{matchedLength}</span>
-        <span className="text-slate-500">/ 12</span>
+        <span className="text-slate-500">/ {PATTERN_LENGTH}</span>
         <span className="ml-auto text-xs text-slate-500">M1 · ativo {activeId}</span>
       </div>
 

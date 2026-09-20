@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Db } from '../db/db.js';
-import type { AppEvent, Candle, Settings } from '@polarium12c/shared';
+import { ENTRY_DIRECTION, type AppEvent, type Candle, type Settings } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { evaluateSafety, type SafetyContext } from './SafetyGate.js';
 import {
@@ -60,17 +60,17 @@ export class OrderService extends EventEmitter {
 
   /** Deve ser chamado quando o LiveMonitorService emitir um evento PATTERN_CONFIRMED. */
   async handleConfirmed(activeId: number, window: Candle[], wickPercentage11: number): Promise<void> {
-    const candle12 = window[window.length - 1];
-    if (!candle12) return;
+    const lastPatternCandle = window[window.length - 1]; // hoje a 13a vela do padrao (sempre G)
+    if (!lastPatternCandle) return;
 
-    const signalId = `12CANDLES-${activeId}-${candle12.to}-CALL`;
+    const signalId = `12CANDLES-${activeId}-${lastPatternCandle.to}-${ENTRY_DIRECTION}`;
 
     if (await getSignal(this.db, signalId)) return; // ja processado — idempotente por design
 
     await saveSignal(this.db, {
       id: signalId,
       activeId,
-      direction: 'CALL',
+      direction: ENTRY_DIRECTION,
       createdAt: Date.now(),
       candles: window,
       wickPercentage11,
@@ -92,7 +92,7 @@ export class OrderService extends EventEmitter {
       id: orderId,
       signalId,
       activeId,
-      direction: 'CALL',
+      direction: ENTRY_DIRECTION,
       amount: settings.entryAmount,
       status: 'REQUESTED',
       requestedAt: Date.now(),
@@ -106,7 +106,7 @@ export class OrderService extends EventEmitter {
     try {
       const ack = await this.broker.placeOrder({
         activeId,
-        direction: 'CALL',
+        direction: ENTRY_DIRECTION,
         amount: settings.entryAmount,
         expirySeconds: EXPIRY_SECONDS,
       });
