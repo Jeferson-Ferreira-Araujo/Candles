@@ -26,7 +26,6 @@ export interface MockBrokerConfig {
 const DEFAULT_MOCK_ASSETS: AssetInfo[] = [
   { id: 81, name: 'GBPUSD-OTC', isOtc: true, kinds: ['digital'] },
   { id: 76, name: 'EURUSD-OTC', isOtc: true, kinds: ['digital', 'binary'] },
-  { id: 1, name: 'EURUSD', isOtc: false, kinds: ['binary', 'turbo'] },
   { id: 2298, name: 'EXEMPLO-OTC', isOtc: true, kinds: ['digital'] },
 ];
 
@@ -99,7 +98,8 @@ export class MockBrokerAdapter implements BrokerAdapter {
 
   async listAssets(): Promise<AssetInfo[]> {
     this.assertConnected();
-    return this.config.assets;
+    // Mesma regra do PolariumAdapter: o app so opera OTC digital.
+    return this.config.assets.filter((a) => a.isOtc && a.kinds.includes('digital'));
   }
 
   async getHistoricalCandles(activeId: number, size: number, from: number, to: number): Promise<Candle[]> {

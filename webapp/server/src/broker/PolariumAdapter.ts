@@ -94,6 +94,10 @@ export class PolariumAdapter implements BrokerAdapter {
    * dados reais da Polarium nesta mesma base de codigo (ex.: "GBPUSD-OTC"), nao um campo
    * separado do SDK. Cada catalogo e buscado isoladamente: se um tipo de opcao nao estiver
    * disponivel para a conta, os outros ainda aparecem.
+   *
+   * O app so opera OTC digital (placeOrder() so usa digitalOptions(), e o usuario decidiu
+   * restringir o escopo a OTC) — entao o resultado final so inclui ativos que sejam OTC E
+   * apareçam no catalogo digital, mesmo que tenham sido encontrados em outro catalogo tambem.
    */
   async listAssets(): Promise<AssetInfo[]> {
     const sdk = this.requireSdk();
@@ -137,7 +141,9 @@ export class PolariumAdapter implements BrokerAdapter {
       // idem
     }
 
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(byId.values())
+      .filter((a) => a.isOtc && a.kinds.includes('digital'))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private async getTradingBalance() {
