@@ -132,7 +132,10 @@ export async function runBacktest(
       if (tick.kind === 'CONFIRMED') {
         const candle13 = candles[i + 1]; // pode ser undefined se for o ultimo candle do periodo
         allOccurrences.push({
-          id: `12CANDLES-${activeId}-${candle.to}-CALL`,
+          // Prefixado com o id da propria rodada do backtest: sem isso, rodar o MESMO
+          // backtest (mesmo ativo/periodo) duas vezes gerava o mesmo id de novo (baseado
+          // so em activeId + horario da 12a vela), violando o UNIQUE global da tabela.
+          id: `${id}-12CANDLES-${activeId}-${candle.to}-CALL`,
           activeId,
           occurredAt: candle.to,
           candles: tick.window,

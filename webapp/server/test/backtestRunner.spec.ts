@@ -36,6 +36,19 @@ function buildOccurrences(activeId: number, baseFrom: number, count: number, res
   return candles;
 }
 
+/**
+ * Ancora um timestamp dentro do dia UTC atual, longe o suficiente da meia-noite para que
+ * nenhuma sequencia curta de candles construida a partir dele possa atravessar a virada de
+ * dia. Usar `Date.now() - Nh` diretamente e fragil: perto da meia-noite UTC, isso pode cair
+ * no dia ANTERIOR e quebrar testes que dependem de duas ocorrencias caindo no mesmo dia
+ * (exatamente o que aconteceu ao rodar este teste as ~05h UTC).
+ */
+function safeDayStart(): number {
+  const now = Math.floor(Date.now() / 1000);
+  const todayMidnightUtc = Math.floor(now / 86_400) * 86_400;
+  return todayMidnightUtc + 2 * 60 * 60; // 02:00 UTC do dia atual
+}
+
 describe('runBacktest', () => {
   let db: Db;
 
@@ -54,7 +67,7 @@ describe('runBacktest', () => {
 
     // Precisa cair dentro da janela real de `days` (30) a partir de agora, ja que
     // runBacktest usa Date.now() internamente — nao um dia fixo no passado.
-    const dayStart = Math.floor(Date.now() / 1000) - 6 * 60 * 60;
+    const dayStart = safeDayStart();
     const activeId = 81;
 
     // 2 ocorrencias no mesmo "dia logico" do teste (nao precisa ser exatamente 1 dia UTC
@@ -83,7 +96,7 @@ describe('runBacktest', () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const activeId = 76;
-    const candles = buildOccurrences(activeId, Math.floor(Date.now() / 1000) - 6 * 60 * 60, 1, false);
+    const candles = buildOccurrences(activeId, safeDayStart(), 1, false);
     broker.seedCandles(activeId, candles);
 
     const { occurrences } = await runBacktest(db, broker, [activeId], 30);
