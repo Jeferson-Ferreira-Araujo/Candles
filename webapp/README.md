@@ -12,7 +12,7 @@ estruturalmente a corretora no agregado. A interface deve sempre comunicar isso 
 
 ## Stack
 
-- Backend: Node.js + TypeScript, Express (REST) + `ws` (WebSocket), SQLite (`better-sqlite3`), Vitest.
+- Backend: Node.js + TypeScript, Express (REST) + `ws` (WebSocket), Postgres via Supabase (`pg`), Vitest.
 - Frontend: React + TypeScript + Vite + Tailwind.
 - Pacote compartilhado (`shared/`): tipos de dominio e a regra "12 Candles" congelada.
 
@@ -37,9 +37,8 @@ npm run dev
 Isso sobe o servidor (`server/src/index.ts`) em `http://localhost:4000`, com endpoints
 `/api/health`, `/api/settings` (GET/PUT), `/api/backtest` (POST), `/api/events`,
 `/api/daily-result` e `/api/balances`, alem de WebSocket em `/ws` (transmite os eventos do
-monitor ao vivo). O banco SQLite e criado automaticamente em `server/data/app.db` na
-primeira execucao. Sem nenhuma configuracao extra, usa `MockBrokerAdapter` (sem rede) —
-para rodar contra a Polarium de verdade, ver `.env.example`.
+monitor ao vivo). Sem nenhuma configuracao extra, usa `MockBrokerAdapter` (sem rede) — para
+rodar contra a Polarium de verdade, ver `.env.example`.
 
 Frontend (porta 5173, em outro terminal — proxy `/api` e `/ws` ja apontam para o backend):
 
@@ -47,7 +46,9 @@ Frontend (porta 5173, em outro terminal — proxy `/api` e `/ws` ja apontam para
 npm run dev:client
 ```
 
-Copie `server/.env.example` para `server/.env` e ajuste conforme necessario.
+Copie `server/.env.example` para `server/.env` e ajuste conforme necessario —
+**`DATABASE_URL` e obrigatorio** mesmo em modo mock (o servidor nao sobe sem ele). Veja a
+secao **Banco de dados (Supabase)** abaixo para onde pegar essa connection string.
 
 ### Login (modo `polarium`)
 
@@ -59,6 +60,23 @@ exige autenticacao (`GET /api/auth/status`). Nada e salvo em disco: o SSID so vi
 memoria do processo do servidor enquanto ele estiver de pe; reiniciar o servidor exige
 logar de novo. Em `BROKER_ADAPTER=mock` (padrao local) o login e pulado inteiramente.
 
+## Banco de dados (Supabase)
+
+O banco e Postgres hospedado no [Supabase](https://supabase.com) (projeto `candles-12`) —
+nao SQLite local. O schema (`server/src/db/schema.sql`, `CREATE TABLE IF NOT EXISTS`) e
+aplicado automaticamente toda vez que o servidor sobe, contra qualquer Postgres que voce
+apontar via `DATABASE_URL`.
+
+Para pegar a connection string: painel do Supabase → projeto `candles-12` → **Project
+Settings** → **Database** → **Connection String** → aba **URI**. Cole em
+`server/.env` como `DATABASE_URL=...` — **nunca cole a senha no chat ou em qualquer lugar
+versionado**.
+
+Os testes (`npm test`) usam o MESMO banco (nao ha um modo ":memory:" para Postgres) —
+cada teste limpa (`TRUNCATE`) as tabelas relevantes antes de rodar, e os arquivos de teste
+rodam em sequencia (nao em paralelo) para nao haver corrida entre eles. Por isso rodar os
+testes localmente tambem exige `DATABASE_URL` configurado em `server/.env`.
+
 ## Rodar os testes
 
 ```bash
@@ -67,10 +85,10 @@ npm test
 
 ## O que ja existe (Fases 1-5 e 8 do plano)
 
-1. **Arquitetura + banco** — schema SQLite (`server/src/db/schema.sql`) cobrindo candles,
-   sinais, ordens, backtests/ocorrencias, configuracoes, resultado diario e eventos.
-   Protecao contra ordem duplicada (`UNIQUE(signal_id)`) testada em
-   `server/test/orderDedup.spec.ts`.
+1. **Arquitetura + banco** — schema Postgres (`server/src/db/schema.sql`, ver secao
+   **Banco de dados** acima) cobrindo candles, sinais, ordens, backtests/ocorrencias,
+   configuracoes, resultado diario e eventos. Protecao contra ordem duplicada
+   (`UNIQUE(signal_id)`) testada em `server/test/orderDedup.spec.ts`.
 2. **StrategyEngine "12 Candles"** (`server/src/strategy/twelveCandlesEngine.ts`) — regra
    congelada, com suporte a padroes sobrepostos, invalidacao pelo pavio da 11a vela
    (incluindo o caso `high === low`), e deteccao de gaps. Coberto por
@@ -167,25 +185,25 @@ Este app tem duas partes com necessidades muito diferentes de hospedagem:
 
 - **`client/`** (Vite/React) — arquivos estaticos. Serve bem em qualquer CDN, inclusive
   **Vercel**.
-- **`server/`** (Express + WebSocket persistente + SQLite local) — precisa de um processo
-  Node de longa duracao com disco. **Isso NAO roda em serverless da Vercel** (funcoes
-  serverless sao stateless, com timeout curto, e sem WebSocket persistente do jeito que
-  este app usa). Por isso o backend vai no **Render**.
+- **`server/`** (Express + WebSocket persistente) — precisa de um processo Node de longa
+  duracao. **Isso NAO roda em serverless da Vercel** (funcoes serverless sao stateless, com
+  timeout curto, e sem WebSocket persistente do jeito que este app usa). Por isso o backend
+  vai no **Render**, falando com o Postgres do **Supabase** (ja nao depende mais de disco
+  local para persistir dados).
 
 ### Backend no Render
 
 1. No painel do Render: **New +** → **Blueprint** → conecte o repositorio GitHub. O Render
    le o `render.yaml` da raiz do repositorio sozinho e cria o servico `candles-12-server`.
 2. Em **Environment**, preencha as variaveis marcadas como secretas no blueprint:
+   - `DATABASE_URL` — connection string do Postgres (Supabase, projeto `candles-12`; ver
+     secao **Banco de dados** acima para onde pegar).
    - `POLARIUM_PLATFORM_ID` (82, salvo indicacao em contrario)
    - `CORS_ORIGIN` — a URL do seu frontend na Vercel (ex.: `https://seu-app.vercel.app`),
      **sem barra no final**. Sem isso, o navegador bloqueia as chamadas por CORS.
 3. **Nunca** adicione `POLARIUM_SSID` como variavel de ambiente — ele so entra pela tela
    de login em tempo de execucao.
-4. ⚠️ O plano gratuito do Render **nao tem disco persistente**: o banco SQLite e apagado a
-   cada novo deploy. Para manter historico entre deploys, adicione um Persistent Disk
-   (requer plano pago) montado em `/var/data` e defina `DB_PATH=/var/data/app.db`.
-5. Depois do primeiro deploy, anote a URL publica do servico (ex.:
+4. Depois do primeiro deploy, anote a URL publica do servico (ex.:
    `https://candles-12-server.onrender.com`) — voce vai precisar dela no passo da Vercel.
 
 ### Frontend na Vercel

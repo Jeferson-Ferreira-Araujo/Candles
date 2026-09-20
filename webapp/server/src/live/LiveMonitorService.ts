@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import type Database from 'better-sqlite3';
+import type { Db } from '../db/db.js';
 import { CANDLE_SIZE_M1, type AppEvent, type Candle, type PatternProgress } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { TwelveCandlesEngine } from '../strategy/twelveCandlesEngine.js';
@@ -19,9 +19,16 @@ export class LiveMonitorService extends EventEmitter {
   private readonly engine = new TwelveCandlesEngine();
   private unsubscribers: Array<() => void> = [];
   private started = false;
+  // Uma fila (Promise encadeada) por ativo: com Postgres real, salvar cada candle envolve
+  // I/O de rede com latencia variavel — sem serializar por ativo, dois handleCandle()
+  // concorrentes do MESMO ativo poderiam terminar fora de ordem e alimentar o
+  // TwelveCandlesEngine (que exige ordem estrita) com as velas trocadas, corrompendo o
+  // casamento do padrao. Cada candle so comeca a ser processado depois que o anterior
+  // do MESMO ativo terminou.
+  private queues = new Map<number, Promise<void>>();
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Db,
     private readonly broker: BrokerAdapter,
     private readonly activeIds: number[],
     private readonly candleSize: number = CANDLE_SIZE_M1
@@ -35,7 +42,7 @@ export class LiveMonitorService extends EventEmitter {
 
     for (const activeId of this.activeIds) {
       const unsubscribe = await this.broker.subscribeCandles(activeId, this.candleSize, (candle) => {
-        this.handleCandle(activeId, candle);
+        this.enqueueCandle(activeId, candle);
       });
       this.unsubscribers.push(unsubscribe);
     }
@@ -51,7 +58,15 @@ export class LiveMonitorService extends EventEmitter {
     return this.engine.getProgress(activeId);
   }
 
-  private handleCandle(activeId: number, candle: Candle): void {
+  private enqueueCandle(activeId: number, candle: Candle): void {
+    const previous = this.queues.get(activeId) ?? Promise.resolve();
+    const next = previous
+      .then(() => this.handleCandle(activeId, candle))
+      .catch((err) => console.error('[live] erro ao processar candle:', err));
+    this.queues.set(activeId, next);
+  }
+
+  private async handleCandle(activeId: number, candle: Candle): Promise<void> {
     if (!candle.isClosed) {
       // Candle ainda se formando: so serve para o preview em tempo real do pavio da 11a
       // (quando aplicavel). Nunca alimenta o engine de confirmacao — "nunca confirmar
@@ -64,7 +79,7 @@ export class LiveMonitorService extends EventEmitter {
       return;
     }
 
-    saveCandle(this.db, candle, 'live');
+    await saveCandle(this.db, candle, 'live');
     this.emitEvent('CANDLE_CLOSED', activeId, { candle });
 
     const tick = this.engine.onCandleClosed(activeId, candle);
@@ -94,7 +109,7 @@ export class LiveMonitorService extends EventEmitter {
 
   private emitEvent(type: AppEvent['type'], activeId: number, payload: Record<string, unknown>): void {
     const event: AppEvent = { id: randomUUID(), type, activeId, payload, createdAt: Date.now() };
-    insertEvent(this.db, event);
+    insertEvent(this.db, event).catch((err) => console.error('[live] falha ao persistir evento:', err));
     this.emit('event', event);
   }
 }

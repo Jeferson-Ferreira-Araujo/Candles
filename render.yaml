@@ -6,15 +6,18 @@
 # 2. Depois de criado o servico, va em "Environment" no painel do Render e preencha as
 #    variaveis marcadas abaixo com "sync: false" (elas NAO ficam neste arquivo, que e
 #    publico no repositorio):
+#      - DATABASE_URL — connection string do Postgres (Supabase). Pegue em: painel do
+#        Supabase > projeto candles-12 > Project Settings > Database > Connection String
+#        > URI.
 #      - POLARIUM_PLATFORM_ID (82, salvo indicacao em contrario da Polarium)
 #      - CORS_ORIGIN (a URL do seu frontend na Vercel, ex.: https://seu-app.vercel.app)
 # 3. NUNCA coloque POLARIUM_SSID aqui nem em nenhuma variavel de ambiente fixa — o SSID
 #    so entra pela tela de login do proprio app (ver webapp/README.md).
 #
-# ATENCAO — armazenamento: o plano gratuito do Render nao tem disco persistente. O banco
-# SQLite (server/data/app.db) e apagado a cada novo deploy. Para manter historico entre
-# deploys, adicione um "Persistent Disk" no painel (plano pago) montado em /var/data e
-# defina DB_PATH=/var/data/app.db nas variaveis de ambiente.
+# Banco: Postgres hospedado no Supabase (projeto "candles-12", org "JA Developer"),
+# nao SQLite local — os dados persistem normalmente entre deploys, sem precisar de disco
+# persistente no Render. O schema (CREATE TABLE IF NOT EXISTS) e aplicado automaticamente
+# toda vez que o servidor sobe.
 
 services:
   - type: web
@@ -22,7 +25,11 @@ services:
     runtime: node
     plan: free
     rootDir: webapp
-    buildCommand: npm install && npm run build --workspace shared && npm run build --workspace server
+    # --include=dev e necessario porque NODE_ENV=production (abaixo) faz o "npm install"
+    # pular devDependencies por padrao — mas typescript/@types/* (exigidos para compilar)
+    # ficam em devDependencies. Sem isso, o build falha com "could not find a declaration
+    # file for module 'express'" etc.
+    buildCommand: npm install --include=dev && npm run build --workspace shared && npm run build --workspace server
     startCommand: node server/dist/index.js
     healthCheckPath: /api/health
     envVars:
@@ -30,9 +37,9 @@ services:
         value: production
       - key: BROKER_ADAPTER
         value: polarium
+      - key: DATABASE_URL
+        sync: false
       - key: POLARIUM_PLATFORM_ID
         sync: false
       - key: CORS_ORIGIN
         sync: false
-      - key: DB_PATH
-        value: ./data/app.db

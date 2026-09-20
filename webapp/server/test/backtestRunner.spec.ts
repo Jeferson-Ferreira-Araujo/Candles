@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Candle } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
-import { openDb } from '../src/db/db.js';
+import { getTestDb, resetDb } from './helpers/testDb.js';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
 import { runBacktest } from '../src/backtest/backtestRunner.js';
 import { listBacktestOccurrences } from '../src/db/repositories.js';
+import type { Db } from '../src/db/db.js';
 
 const SIZE = 60;
 
@@ -36,8 +37,18 @@ function buildOccurrences(activeId: number, baseFrom: number, count: number, res
 }
 
 describe('runBacktest', () => {
+  let db: Db;
+
+  beforeEach(async () => {
+    db = await getTestDb();
+    await resetDb(db);
+  });
+
+  afterAll(async () => {
+    await db.end();
+  });
+
   it('detecta multiplas ocorrencias, calcula WIN/LOSS pela 13a vela, e separa "todas" de "primeira do dia"', async () => {
-    const db = openDb(':memory:');
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
 
@@ -63,13 +74,12 @@ describe('runBacktest', () => {
     expect(summary.firstOfDayOnly).toEqual({ wins: 1, losses: 0, dojis: 0 });
 
     // As ocorrencias devem ter sido persistidas de verdade no banco (nao so em memoria).
-    const persisted = listBacktestOccurrences(db, summary.runId);
+    const persisted = await listBacktestOccurrences(db, summary.runId);
     expect(persisted).toHaveLength(2);
     expect(persisted.map((o) => o.result)).toEqual(['WIN', 'WIN']);
   });
 
   it('marca LOSS quando a 13a vela fecha abaixo da abertura', async () => {
-    const db = openDb(':memory:');
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const activeId = 76;
@@ -82,7 +92,6 @@ describe('runBacktest', () => {
   });
 
   it('perDay inclui dias sem nenhum sinal (bucket NONE) para todo o periodo pedido', async () => {
-    const db = openDb(':memory:');
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const activeId = 2298;

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
@@ -23,10 +24,15 @@ import { OrderService } from './orders/OrderService.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
-const DB_PATH = process.env.DB_PATH ?? './data/app.db';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-const db = openDb(DB_PATH);
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error('DATABASE_URL nao configurado. Defina a connection string do Postgres (Supabase).');
+  process.exit(1);
+}
+
+const db = await openDb(DATABASE_URL);
 const brokerManager = new BrokerManager();
 
 let liveMonitor: LiveMonitorService | null = null;
@@ -45,8 +51,9 @@ app.use(cookieParser());
 // Em modo polarium, TUDO abaixo de /api (exceto /api/health e /api/auth/*) exige uma
 // sessao valida, que so existe depois de um login bem-sucedido com um SSID real.
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, mode: loadSettings(db).mode, brokerAdapter: brokerManager.requiresLogin ? 'polarium' : 'mock' });
+app.get('/api/health', async (_req, res) => {
+  const settings = await loadSettings(db);
+  res.json({ ok: true, mode: settings.mode, brokerAdapter: brokerManager.requiresLogin ? 'polarium' : 'mock' });
 });
 
 app.get('/api/auth/status', (req, res) => {
@@ -112,12 +119,12 @@ app.use('/api', (req, res, next) => {
 // ROTAS DA APLICACAO
 // ============================================================================
 
-app.get('/api/settings', (_req, res) => {
-  res.json(loadSettings(db));
+app.get('/api/settings', async (_req, res) => {
+  res.json(await loadSettings(db));
 });
 
-app.put('/api/settings', (req, res) => {
-  const current = loadSettings(db);
+app.put('/api/settings', async (req, res) => {
+  const current = await loadSettings(db);
   const next = { ...current, ...req.body };
   if (next.entryAmount < 5) {
     res.status(400).json({ error: 'entryAmount minimo e 5.' });
@@ -128,9 +135,9 @@ app.put('/api/settings', (req, res) => {
     return;
   }
   if (current.robotActive && !next.robotActive) {
-    insertEvent(db, { id: randomUUID(), type: 'KILL_SWITCH', payload: { source: 'user' }, createdAt: Date.now() });
+    await insertEvent(db, { id: randomUUID(), type: 'KILL_SWITCH', payload: { source: 'user' }, createdAt: Date.now() });
   }
-  saveSettings(db, next);
+  await saveSettings(db, next);
   broadcastRaw('SETTINGS_UPDATED', next);
   res.json(next);
 });
@@ -149,19 +156,19 @@ app.post('/api/backtest', async (req, res) => {
   }
 });
 
-app.get('/api/orders', (req, res) => {
+app.get('/api/orders', async (req, res) => {
   const limit = Number(req.query.limit ?? 200);
-  res.json(listOrders(db, limit));
+  res.json(await listOrders(db, limit));
 });
 
-app.get('/api/events', (req, res) => {
+app.get('/api/events', async (req, res) => {
   const limit = Number(req.query.limit ?? 200);
-  res.json(listEvents(db, limit));
+  res.json(await listEvents(db, limit));
 });
 
-app.get('/api/daily-result', (_req, res) => {
+app.get('/api/daily-result', async (_req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  res.json(getDailyResult(db, today));
+  res.json(await getDailyResult(db, today));
 });
 
 app.get('/api/balances', async (_req, res) => {
@@ -203,7 +210,7 @@ async function ensureLiveServicesStarted(): Promise<void> {
   if (!brokerManager.isReady()) return;
   const broker = brokerManager.get();
 
-  const settings = loadSettings(db);
+  const settings = await loadSettings(db);
 
   orderService = new OrderService(db, broker, () => loadSettings(db));
   orderService.on('event', broadcast);
@@ -235,14 +242,14 @@ async function ensureLiveServicesStarted(): Promise<void> {
 async function reconcileUnknownOrders(): Promise<void> {
   if (!brokerManager.isReady()) return; // sem sessao (modo polarium sem login ainda) — nada a reconciliar agora
   const broker = brokerManager.get();
-  const unknown = listUnknownOrders(db).filter((o) => o.brokerOrderId);
+  const unknown = (await listUnknownOrders(db)).filter((o) => o.brokerOrderId);
   if (unknown.length === 0) return;
   console.log(`[reconcile] ${unknown.length} ordem(ns) UNKNOWN com brokerOrderId — tentando reconciliar...`);
   for (const order of unknown) {
     try {
       const resolution = await broker.getOrderResult(order.brokerOrderId!);
       if (resolution) {
-        updateOrder(db, order.id, {
+        await updateOrder(db, order.id, {
           status: 'FILLED',
           resolvedAt: Date.now(),
           result: resolution.result,

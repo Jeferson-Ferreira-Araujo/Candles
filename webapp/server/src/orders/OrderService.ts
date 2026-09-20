@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import type Database from 'better-sqlite3';
+import type { Db } from '../db/db.js';
 import type { AppEvent, Candle, Settings } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { evaluateSafety, type SafetyContext } from './SafetyGate.js';
@@ -48,9 +48,9 @@ export class OrderService extends EventEmitter {
   private readonly maxPollAttempts: number;
 
   constructor(
-    private readonly db: Database.Database,
+    private readonly db: Db,
     private readonly broker: BrokerAdapter,
-    private readonly getSettings: () => Settings,
+    private readonly getSettings: () => Promise<Settings>,
     options: OrderServiceOptions = {}
   ) {
     super();
@@ -65,9 +65,9 @@ export class OrderService extends EventEmitter {
 
     const signalId = `12CANDLES-${activeId}-${candle12.to}-CALL`;
 
-    if (getSignal(this.db, signalId)) return; // ja processado — idempotente por design
+    if (await getSignal(this.db, signalId)) return; // ja processado — idempotente por design
 
-    saveSignal(this.db, {
+    await saveSignal(this.db, {
       id: signalId,
       activeId,
       direction: 'CALL',
@@ -77,18 +77,18 @@ export class OrderService extends EventEmitter {
       status: 'CREATED',
     });
 
-    const settings = this.getSettings();
+    const settings = await this.getSettings();
     const context = await this.buildSafetyContext(activeId, signalId, settings);
     const safety = evaluateSafety(context);
 
     if (!safety.allowed) {
-      updateSignalStatus(this.db, signalId, 'BLOCKED');
+      await updateSignalStatus(this.db, signalId, 'BLOCKED');
       this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, blockedBy: safety.blockedBy });
       return;
     }
 
     const orderId = randomUUID();
-    const { inserted } = insertOrderIfAbsent(this.db, {
+    const { inserted } = await insertOrderIfAbsent(this.db, {
       id: orderId,
       signalId,
       activeId,
@@ -100,7 +100,7 @@ export class OrderService extends EventEmitter {
     });
     if (!inserted) return; // outra chamada concorrente ja criou a ordem para este sinal
 
-    updateSignalStatus(this.db, signalId, 'ORDER_REQUESTED');
+    await updateSignalStatus(this.db, signalId, 'ORDER_REQUESTED');
     this.emitEvent('ORDER_REQUESTED', activeId, { signalId, orderId, amount: settings.entryAmount });
 
     try {
@@ -110,8 +110,8 @@ export class OrderService extends EventEmitter {
         amount: settings.entryAmount,
         expirySeconds: EXPIRY_SECONDS,
       });
-      updateOrder(this.db, orderId, { brokerOrderId: ack.brokerOrderId, status: 'CONFIRMED', confirmedAt: Date.now() });
-      updateSignalStatus(this.db, signalId, 'ORDER_CONFIRMED');
+      await updateOrder(this.db, orderId, { brokerOrderId: ack.brokerOrderId, status: 'CONFIRMED', confirmedAt: Date.now() });
+      await updateSignalStatus(this.db, signalId, 'ORDER_CONFIRMED');
       this.emitEvent('ORDER_CONFIRMED', activeId, { signalId, orderId, brokerOrderId: ack.brokerOrderId });
 
       this.pollForResolution(orderId, ack.brokerOrderId, activeId, signalId, settings).catch((err) =>
@@ -120,8 +120,8 @@ export class OrderService extends EventEmitter {
     } catch (err) {
       // Perdeu a conexao (ou a corretora rejeitou) DEPOIS de persistir a ordem, ANTES de
       // confirmar. Regra: nunca reenviar. Fica UNKNOWN ate reconciliacao manual/automatica.
-      updateOrder(this.db, orderId, { status: 'UNKNOWN' });
-      updateSignalStatus(this.db, signalId, 'ORDER_UNKNOWN');
+      await updateOrder(this.db, orderId, { status: 'UNKNOWN' });
+      await updateSignalStatus(this.db, signalId, 'ORDER_UNKNOWN');
       this.emitEvent('ORDER_UNKNOWN', activeId, { signalId, orderId, error: err instanceof Error ? err.message : String(err) });
     }
   }
@@ -168,9 +168,9 @@ export class OrderService extends EventEmitter {
       stopWinDaily: settings.stopWinDaily,
       stopLossDaily: settings.stopLossDaily,
       maxOperationsPerDay: settings.maxOperationsPerDay,
-      dailyResult: getDailyResult(this.db, todayIso()),
-      hasPendingOrderForActive: hasPendingOrderForActive(this.db, activeId),
-      orderAlreadyExistsForSignal: getOrderBySignalId(this.db, signalId) !== undefined,
+      dailyResult: await getDailyResult(this.db, todayIso()),
+      hasPendingOrderForActive: await hasPendingOrderForActive(this.db, activeId),
+      orderAlreadyExistsForSignal: (await getOrderBySignalId(this.db, signalId)) !== undefined,
     };
   }
 
@@ -193,26 +193,26 @@ export class OrderService extends EventEmitter {
 
       if (!resolution) continue; // ainda nao fechou
 
-      updateOrder(this.db, orderId, {
+      await updateOrder(this.db, orderId, {
         status: 'FILLED',
         resolvedAt: Date.now(),
         result: resolution.result,
         pnl: resolution.pnl,
         payoutPercentage: resolution.payoutPercentage,
       });
-      updateSignalStatus(this.db, signalId, resolution.result);
+      await updateSignalStatus(this.db, signalId, resolution.result);
       this.emitEvent(resolution.result, activeId, { signalId, orderId, pnl: resolution.pnl });
 
-      this.applyToDailyResult(activeId, resolution.result, resolution.pnl, settings);
+      await this.applyToDailyResult(activeId, resolution.result, resolution.pnl, settings);
       return;
     }
     // Esgotou as tentativas sem resolucao: a ordem fica CONFIRMED (nao UNKNOWN — sabemos
     // que foi aceita, so nao confirmamos o resultado ainda). Reconciliacao manual depois.
   }
 
-  private applyToDailyResult(activeId: number, result: 'WIN' | 'LOSS' | 'DOJI', pnl: number, settings: Settings): void {
+  private async applyToDailyResult(activeId: number, result: 'WIN' | 'LOSS' | 'DOJI', pnl: number, settings: Settings): Promise<void> {
     const date = todayIso();
-    const current = getDailyResult(this.db, date);
+    const current = await getDailyResult(this.db, date);
     const next = {
       ...current,
       wins: current.wins + (result === 'WIN' ? 1 : 0),
@@ -231,12 +231,12 @@ export class OrderService extends EventEmitter {
       this.emitEvent('STOP_LOSS', activeId, { pnl: next.pnl, stopLossDaily: settings.stopLossDaily });
     }
 
-    saveDailyResult(this.db, next);
+    await saveDailyResult(this.db, next);
   }
 
   private emitEvent(type: AppEvent['type'], activeId: number, payload: Record<string, unknown>): void {
     const event: AppEvent = { id: randomUUID(), type, activeId, payload, createdAt: Date.now() };
-    insertEvent(this.db, event);
+    insertEvent(this.db, event).catch((err) => console.error('[orders] falha ao persistir evento:', err));
     this.emit('event', event);
   }
 }

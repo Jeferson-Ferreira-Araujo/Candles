@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { Db } from '../db/db.js';
 import {
   CANDLE_SIZE_M1,
   type BacktestDaySummary,
@@ -104,14 +104,14 @@ function buildSummary(
  * Nao envia nenhuma ordem — e leitura de historico + calculo local.
  */
 export async function runBacktest(
-  db: Database.Database,
+  db: Db,
   broker: BrokerAdapter,
   activeIds: number[],
   days: number
 ): Promise<BacktestResult> {
   const id = `backtest-${randomUUID()}`;
   const startedAt = Date.now();
-  insertBacktest(db, { id, activeIds, days, startedAt });
+  await insertBacktest(db, { id, activeIds, days, startedAt });
 
   const now = Math.floor(Date.now() / 1000);
   const from = now - days * 24 * 60 * 60;
@@ -156,10 +156,10 @@ export async function runBacktest(
     }
   }
 
-  for (const occ of allOccurrences) insertBacktestOccurrence(db, id, occ);
+  for (const occ of allOccurrences) await insertBacktestOccurrence(db, id, occ);
 
   const finishedAt = Date.now();
-  finishBacktest(db, id, finishedAt);
+  await finishBacktest(db, id, finishedAt);
 
   const summary = buildSummary(id, activeIds, from, now, allOccurrences);
 

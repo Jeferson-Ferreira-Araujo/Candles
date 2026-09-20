@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import type { AppEvent, Candle } from '@polarium12c/shared';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import type { AppEvent, Candle, CandleColor } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
-import { openDb } from '../src/db/db.js';
+import { getTestDb, resetDb } from './helpers/testDb.js';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
 import { LiveMonitorService } from '../src/live/LiveMonitorService.js';
 import { listEvents } from '../src/db/repositories.js';
+import type { Db } from '../src/db/db.js';
 
 const SIZE = 60;
 const ACTIVE = 81;
@@ -20,15 +21,31 @@ function redWithWick(from: number, wickFraction: number): Candle {
 }
 
 function buildTwelve(baseFrom: number, wick: number): Candle[] {
-  return TWELVE_CANDLES_PATTERN.map((color, i) => {
+  return TWELVE_CANDLES_PATTERN.map((color: CandleColor, i: number) => {
     const from = baseFrom + i * SIZE;
     return i === 10 ? redWithWick(from, wick) : color === 'G' ? green(from) : red(from);
   });
 }
 
+/** handleCandle agora persiste de forma assincrona (Postgres) antes de emitir os eventos —
+ * da um respiro pro event loop processar essas promises pendentes antes de checar `received`. */
+function flush(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 1000));
+}
+
 describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
+  let db: Db;
+
+  beforeEach(async () => {
+    db = await getTestDb();
+    await resetDb(db);
+  });
+
+  afterAll(async () => {
+    await db.end();
+  });
+
   it('recebe candles "ao vivo" via subscribeCandles, alimenta o engine, persiste candles/eventos e emite PATTERN_CONFIRMED', async () => {
-    const db = openDb(':memory:');
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
 
@@ -42,6 +59,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     for (const candle of buildTwelve(baseFrom, 0.5)) {
       broker.pushLiveCandle(ACTIVE, candle);
     }
+    await flush();
 
     expect(received.some((e) => e.type === 'CANDLE_CLOSED')).toBe(true);
     expect(received.some((e) => e.type === 'PATTERN_PROGRESS')).toBe(true);
@@ -50,14 +68,13 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     expect(confirmed?.activeId).toBe(ACTIVE);
 
     // Persistencia real: os eventos devem estar no banco, nao so em memoria no EventEmitter.
-    const persistedEvents = listEvents(db, 100);
+    const persistedEvents = await listEvents(db, 100);
     expect(persistedEvents.some((e) => e.type === 'PATTERN_CONFIRMED')).toBe(true);
 
     service.stop();
   });
 
   it('candle ainda aberto nunca gera CANDLE_CLOSED nem confirma nada, so preview quando aplicavel', async () => {
-    const db = openDb(':memory:');
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
     const service = new LiveMonitorService(db, broker, [ACTIVE]);
@@ -69,6 +86,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     const baseFrom = 1_800_000_000;
     const tenClosed = buildTwelve(baseFrom, 0.5).slice(0, 10);
     for (const c of tenClosed) broker.pushLiveCandle(ACTIVE, c);
+    await flush();
 
     received.length = 0; // limpa para isolar o efeito do candle aberto
 
@@ -84,6 +102,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
       isClosed: false,
     };
     broker.pushLiveCandle(ACTIVE, forming);
+    await flush();
 
     expect(received.some((e) => e.type === 'CANDLE_CLOSED')).toBe(false);
     expect(received.some((e) => e.type === 'PATTERN_CONFIRMED')).toBe(false);
