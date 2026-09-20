@@ -1,34 +1,116 @@
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import type { AppEvent } from '@polarium12c/shared';
 import { openDb } from './db/db.js';
-import { loadSettings, saveSettings, listEvents, getDailyResult, insertEvent } from './db/repositories.js';
-import { createBrokerAdapter } from './brokerFactory.js';
+import {
+  loadSettings,
+  saveSettings,
+  listEvents,
+  getDailyResult,
+  insertEvent,
+  listUnknownOrders,
+  listOrders,
+  updateOrder,
+} from './db/repositories.js';
+import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
-import { listUnknownOrders, listOrders, updateOrder } from './db/repositories.js';
+import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const DB_PATH = process.env.DB_PATH ?? './data/app.db';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const db = openDb(DB_PATH);
-const broker = createBrokerAdapter();
+const brokerManager = new BrokerManager();
 
 let liveMonitor: LiveMonitorService | null = null;
-const orderService = new OrderService(db, broker, () => loadSettings(db));
-orderService.on('event', broadcast);
+let orderService: OrderService | null = null;
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: process.env.CORS_ORIGIN ?? true, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
+
+// ============================================================================
+// AUTENTICACAO
+// ============================================================================
+//
+// Em modo mock (dev local), nao ha nada real em jogo — todas as rotas ficam abertas.
+// Em modo polarium, TUDO abaixo de /api (exceto /api/health e /api/auth/*) exige uma
+// sessao valida, que so existe depois de um login bem-sucedido com um SSID real.
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, mode: loadSettings(db).mode, brokerAdapter: process.env.BROKER_ADAPTER ?? 'mock' });
+  res.json({ ok: true, mode: loadSettings(db).mode, brokerAdapter: brokerManager.requiresLogin ? 'polarium' : 'mock' });
 });
+
+app.get('/api/auth/status', (req, res) => {
+  if (!brokerManager.requiresLogin) {
+    res.json({ requiresLogin: false, authenticated: true });
+    return;
+  }
+  res.json({ requiresLogin: true, authenticated: isRequestAuthenticated(req) && brokerManager.isReady() });
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { ssid } = req.body as { ssid?: string };
+  if (!brokerManager.requiresLogin) {
+    res.json({ ok: true }); // modo mock: login e um no-op, nao ha o que autenticar
+    return;
+  }
+  if (!ssid || typeof ssid !== 'string' || ssid.trim().length === 0) {
+    res.status(400).json({ error: 'Informe o SSID.' });
+    return;
+  }
+  try {
+    await brokerManager.loginWithSsid(ssid.trim());
+  } catch (err) {
+    // NUNCA logar o SSID em si — so a mensagem de erro do SDK.
+    console.error('[auth] Falha no login:', err instanceof Error ? err.message : err);
+    res.status(401).json({ error: 'SSID invalido, expirado, ou a Polarium recusou a conexao.' });
+    return;
+  }
+
+  const token = createSession();
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    // Em producao o client (Vercel) e o server (Render) ficam em dominios diferentes —
+    // isso exige SameSite=None (e Secure, obrigatorio junto com None). Em dev local o
+    // client fala com o server via proxy do Vite (mesma origem), entao Lax basta.
+    sameSite: IS_PRODUCTION ? 'none' : 'lax',
+    secure: IS_PRODUCTION,
+    maxAge: 12 * 60 * 60 * 1000,
+  });
+
+  await ensureLiveServicesStarted();
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  destroySession(req.cookies?.[SESSION_COOKIE]);
+  res.clearCookie(SESSION_COOKIE);
+  if (brokerManager.requiresLogin) {
+    liveMonitor?.stop();
+    liveMonitor = null;
+    await brokerManager.logout();
+  }
+  res.json({ ok: true });
+});
+
+// Gate: a partir daqui, toda rota /api/* exige sessao valida quando o broker exige login.
+app.use('/api', (req, res, next) => {
+  if (!brokerManager.requiresLogin) return next();
+  return requireAuth(req, res, next);
+});
+
+// ============================================================================
+// ROTAS DA APLICACAO
+// ============================================================================
 
 app.get('/api/settings', (_req, res) => {
   res.json(loadSettings(db));
@@ -60,8 +142,7 @@ app.post('/api/backtest', async (req, res) => {
     return;
   }
   try {
-    await broker.authenticate();
-    const result = await runBacktest(db, broker, activeIds, days!);
+    const result = await runBacktest(db, brokerManager.get(), activeIds, days!);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -85,8 +166,7 @@ app.get('/api/daily-result', (_req, res) => {
 
 app.get('/api/balances', async (_req, res) => {
   try {
-    await broker.authenticate();
-    const balances = await broker.getBalances();
+    const balances = await brokerManager.get().getBalances();
     res.json(balances);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -111,25 +191,34 @@ function broadcast(event: AppEvent): void {
   broadcastRaw('APP_EVENT', event);
 }
 
-async function startLiveMonitorIfConfigured(): Promise<void> {
+/**
+ * (Re)inicia o monitor ao vivo e o servico de ordens usando o broker atualmente
+ * autenticado. Chamado na subida do processo (modo mock, ou modo polarium se por algum
+ * motivo ja houver uma sessao — normalmente nao havera) e sempre apos um login bem-sucedido.
+ */
+async function ensureLiveServicesStarted(): Promise<void> {
+  liveMonitor?.stop();
+  liveMonitor = null;
+
+  if (!brokerManager.isReady()) return;
+  const broker = brokerManager.get();
+
   const settings = loadSettings(db);
+
+  orderService = new OrderService(db, broker, () => loadSettings(db));
+  orderService.on('event', broadcast);
+
   if (settings.selectedActiveIds.length === 0) {
     console.log('[live] Nenhum ativo selecionado nas configuracoes — monitor ao vivo nao iniciado.');
     return;
   }
-  try {
-    await broker.authenticate();
-  } catch (err) {
-    console.error('[live] Falha ao autenticar no broker — monitor ao vivo NAO iniciado (na duvida, nao operar).');
-    console.error(err instanceof Error ? err.message : err);
-    return;
-  }
+
   liveMonitor = new LiveMonitorService(db, broker, settings.selectedActiveIds);
   liveMonitor.on('event', broadcast);
   liveMonitor.on('event', (event: AppEvent) => {
     if (event.type !== 'PATTERN_CONFIRMED' || event.activeId === undefined) return;
     const payload = event.payload as { window: unknown; wickPercentage11: number };
-    orderService
+    orderService!
       .handleConfirmed(event.activeId, payload.window as Parameters<OrderService['handleConfirmed']>[1], payload.wickPercentage11)
       .catch((err) => console.error('[orders] erro ao processar PATTERN_CONFIRMED:', err));
   });
@@ -144,6 +233,8 @@ async function startLiveMonitorIfConfigured(): Promise<void> {
  * confirmacao) ficam UNKNOWN permanentemente — nunca sao reenviadas.
  */
 async function reconcileUnknownOrders(): Promise<void> {
+  if (!brokerManager.isReady()) return; // sem sessao (modo polarium sem login ainda) — nada a reconciliar agora
+  const broker = brokerManager.get();
   const unknown = listUnknownOrders(db).filter((o) => o.brokerOrderId);
   if (unknown.length === 0) return;
   console.log(`[reconcile] ${unknown.length} ordem(ns) UNKNOWN com brokerOrderId — tentando reconciliar...`);
@@ -168,14 +259,17 @@ async function reconcileUnknownOrders(): Promise<void> {
 
 httpServer.listen(PORT, () => {
   console.log(`[server] ouvindo em http://localhost:${PORT} (WS em /ws)`);
-  console.log(`[server] BROKER_ADAPTER=${process.env.BROKER_ADAPTER ?? 'mock'}`);
+  console.log(`[server] BROKER_ADAPTER=${brokerManager.requiresLogin ? 'polarium' : 'mock'}`);
+  if (brokerManager.requiresLogin) {
+    console.log('[server] Aguardando login via POST /api/auth/login (tela de login do frontend).');
+  }
   reconcileUnknownOrders()
-    .then(() => startLiveMonitorIfConfigured())
+    .then(() => ensureLiveServicesStarted())
     .catch((err) => console.error('[live] erro inesperado ao iniciar:', err));
 });
 
 process.on('SIGINT', async () => {
   liveMonitor?.stop();
-  await broker.disconnect().catch(() => {});
+  if (brokerManager.isReady()) await brokerManager.get().disconnect().catch(() => {});
   process.exit(0);
 });

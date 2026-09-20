@@ -47,8 +47,17 @@ Frontend (porta 5173, em outro terminal — proxy `/api` e `/ws` ja apontam para
 npm run dev:client
 ```
 
-Copie `server/.env.example` para `server/.env` e ajuste conforme necessario
-(`POLARIUM_SSID` **nunca** deve ser commitado).
+Copie `server/.env.example` para `server/.env` e ajuste conforme necessario.
+
+### Login (modo `polarium`)
+
+Quando `BROKER_ADAPTER=polarium`, o app fica **fechado por login**: toda rota de API exige
+uma sessao valida, e a sessao so nasce depois de um `POST /api/auth/login` com um SSID que
+a Polarium aceite. O frontend mostra uma tela de login pedindo o SSID (não a senha — o SDK
+oficial nao tem nenhum metodo de login por email/senha) assim que detecta que o backend
+exige autenticacao (`GET /api/auth/status`). Nada e salvo em disco: o SSID so vive na
+memoria do processo do servidor enquanto ele estiver de pe; reiniciar o servidor exige
+logar de novo. Em `BROKER_ADAPTER=mock` (padrao local) o login e pulado inteiramente.
 
 ## Rodar os testes
 
@@ -141,10 +150,56 @@ npm test
 
 ## Seguranca (recapitulando o que ja esta implementado ou reservado no design)
 
-- SSID somente via variavel de ambiente, nunca hardcoded, nunca logado.
+- SSID nunca fica em variavel de ambiente fixa nem em arquivo — so entra pela tela de
+  login, fica em memoria do servidor, nunca e logado no console.
+- Todas as rotas de API (exceto `/api/health` e `/api/auth/*`) exigem sessao valida quando
+  `BROKER_ADAPTER=polarium` — sem isso, nao ha como consultar nada nem enviar ordem.
 - Ordem so pode ser criada se nao existir uma ordem previa para o mesmo `signalId`
   (garantido pelo schema do banco, nao so pelo codigo da aplicacao).
 - `BrokerAdapter.getPayout()` retorna `null` quando a corretora nao informa um payout
   confiavel — os chamadores devem tratar isso como "nao operar".
 - Nenhum metodo do `PolariumAdapter` inventa comportamento: onde a confirmacao real ainda
   falta, o codigo lanca erro/`TODO` em vez de assumir.
+
+## Deploy
+
+Este app tem duas partes com necessidades muito diferentes de hospedagem:
+
+- **`client/`** (Vite/React) — arquivos estaticos. Serve bem em qualquer CDN, inclusive
+  **Vercel**.
+- **`server/`** (Express + WebSocket persistente + SQLite local) — precisa de um processo
+  Node de longa duracao com disco. **Isso NAO roda em serverless da Vercel** (funcoes
+  serverless sao stateless, com timeout curto, e sem WebSocket persistente do jeito que
+  este app usa). Por isso o backend vai no **Render**.
+
+### Backend no Render
+
+1. No painel do Render: **New +** → **Blueprint** → conecte o repositorio GitHub. O Render
+   le o `render.yaml` da raiz do repositorio sozinho e cria o servico `candles-12-server`.
+2. Em **Environment**, preencha as variaveis marcadas como secretas no blueprint:
+   - `POLARIUM_PLATFORM_ID` (82, salvo indicacao em contrario)
+   - `CORS_ORIGIN` — a URL do seu frontend na Vercel (ex.: `https://seu-app.vercel.app`),
+     **sem barra no final**. Sem isso, o navegador bloqueia as chamadas por CORS.
+3. **Nunca** adicione `POLARIUM_SSID` como variavel de ambiente — ele so entra pela tela
+   de login em tempo de execucao.
+4. ⚠️ O plano gratuito do Render **nao tem disco persistente**: o banco SQLite e apagado a
+   cada novo deploy. Para manter historico entre deploys, adicione um Persistent Disk
+   (requer plano pago) montado em `/var/data` e defina `DB_PATH=/var/data/app.db`.
+5. Depois do primeiro deploy, anote a URL publica do servico (ex.:
+   `https://candles-12-server.onrender.com`) — voce vai precisar dela no passo da Vercel.
+
+### Frontend na Vercel
+
+1. **New Project** → importe o mesmo repositorio GitHub.
+2. Em **Root Directory**, selecione `webapp/client`.
+3. Em **Environment Variables**, adicione `VITE_API_BASE_URL` com a URL do backend no
+   Render (do passo anterior), **sem barra no final**.
+4. Deploy. A Vercel detecta o monorepo (via `workspaces` no `package.json` raiz) e builda
+   `shared` automaticamente antes do `client` (`postinstall` cuida disso).
+
+### Depois do deploy
+
+Acesse a URL da Vercel → tela de login → cole o SSID atual da sua sessao Polarium (mesmo
+processo de sempre, via DevTools do navegador). A sessao dura 12h ou ate voce clicar em
+"Sair"; se o Render reiniciar o processo (redeploy, sleep no plano free, etc.), sera
+preciso logar de novo.

@@ -1,0 +1,38 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Como usar:
+# 1. No painel do Render, clique em "New +" -> "Blueprint" e conecte este repositório
+#    GitHub (Jeferson-Ferreira-Araujo/Candles). O Render le este arquivo sozinho.
+# 2. Depois de criado o servico, va em "Environment" no painel do Render e preencha as
+#    variaveis marcadas abaixo com "sync: false" (elas NAO ficam neste arquivo, que e
+#    publico no repositorio):
+#      - POLARIUM_PLATFORM_ID (82, salvo indicacao em contrario da Polarium)
+#      - CORS_ORIGIN (a URL do seu frontend na Vercel, ex.: https://seu-app.vercel.app)
+# 3. NUNCA coloque POLARIUM_SSID aqui nem em nenhuma variavel de ambiente fixa — o SSID
+#    so entra pela tela de login do proprio app (ver webapp/README.md).
+#
+# ATENCAO — armazenamento: o plano gratuito do Render nao tem disco persistente. O banco
+# SQLite (server/data/app.db) e apagado a cada novo deploy. Para manter historico entre
+# deploys, adicione um "Persistent Disk" no painel (plano pago) montado em /var/data e
+# defina DB_PATH=/var/data/app.db nas variaveis de ambiente.
+
+services:
+  - type: web
+    name: candles-12-server
+    runtime: node
+    plan: free
+    rootDir: webapp
+    buildCommand: npm install && npm run build --workspace shared && npm run build --workspace server
+    startCommand: node server/dist/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BROKER_ADAPTER
+        value: polarium
+      - key: POLARIUM_PLATFORM_ID
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DB_PATH
+        value: ./data/app.db

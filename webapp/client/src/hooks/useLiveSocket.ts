@@ -15,8 +15,14 @@ export function useLiveSocket(): LiveSocketState {
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+    // Em dev local, VITE_API_BASE_URL fica vazio e usamos o proxy do Vite (mesma origem).
+    // Em producao, client (Vercel) e server (Render) ficam em dominios diferentes, entao
+    // o WS precisa apontar explicitamente para o host do backend, nao para o do frontend.
+    const apiBase = import.meta.env.VITE_API_BASE_URL;
+    const wsUrl = apiBase
+      ? `${apiBase.replace(/^http/, 'ws')}/ws`
+      : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+    const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
     socket.onopen = () => setConnected(true);

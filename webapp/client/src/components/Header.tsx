@@ -9,6 +9,8 @@ interface Props {
   dailyResult: DailyResult | null;
   settings: Settings | null;
   onToggleRobot: () => void;
+  showLogout: boolean;
+  onLogout: () => void;
 }
 
 const MODE_STYLES: Record<AppMode, string> = {
@@ -17,7 +19,18 @@ const MODE_STYLES: Record<AppMode, string> = {
   REAL: 'bg-rose-700 text-rose-100',
 };
 
-export function Header({ connected, brokerAdapter, mode, robotActive, balance, dailyResult, settings, onToggleRobot }: Props) {
+export function Header({
+  connected,
+  brokerAdapter,
+  mode,
+  robotActive,
+  balance,
+  dailyResult,
+  settings,
+  onToggleRobot,
+  showLogout,
+  onLogout,
+}: Props) {
   const pnl = dailyResult?.pnl ?? 0;
   const pnlColor = pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-slate-300';
   const maxOps = settings?.maxOperationsPerDay ?? null;
@@ -67,10 +80,19 @@ export function Header({ connected, brokerAdapter, mode, robotActive, balance, d
 
       <button
         onClick={onToggleRobot}
-        className="ml-auto rounded-lg bg-rose-700 hover:bg-rose-600 transition-colors px-4 py-2 font-semibold text-sm"
+        className={`${showLogout ? '' : 'ml-auto'} rounded-lg bg-rose-700 hover:bg-rose-600 transition-colors px-4 py-2 font-semibold text-sm`}
       >
         {robotActive ? '■ Parar robô' : '▶ Ligar robô'}
       </button>
+
+      {showLogout && (
+        <button
+          onClick={onLogout}
+          className="ml-auto rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors px-4 py-2 font-semibold text-sm text-slate-300"
+        >
+          Sair
+        </button>
+      )}
     </header>
   );
 }

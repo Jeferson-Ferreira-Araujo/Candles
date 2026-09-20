@@ -13,7 +13,12 @@ const NAV_ITEMS = [
   { to: '/logs', label: 'Logs', hint: 'Eventos do sistema', icon: '🧾' },
 ];
 
-export function Layout() {
+interface LayoutProps {
+  requiresLogin: boolean;
+  onLoggedOut: () => void;
+}
+
+export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
   const { connected, events } = useLiveSocket();
   const [health, setHealth] = useState<{ mode: AppMode; brokerAdapter: string } | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -53,6 +58,11 @@ export function Layout() {
     setSettings(next);
   }
 
+  async function logout() {
+    await api.logout();
+    onLoggedOut();
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header
@@ -64,6 +74,8 @@ export function Layout() {
         dailyResult={dailyResult}
         settings={settings}
         onToggleRobot={toggleRobot}
+        showLogout={requiresLogin}
+        onLogout={logout}
       />
       <div className="flex flex-1">
         <nav className="w-56 border-r border-slate-800 bg-slate-950 p-3 space-y-1">
