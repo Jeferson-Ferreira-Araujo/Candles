@@ -1,4 +1,11 @@
-import type { AutoAnalysisState } from '../App.js';
+import type { AssetInfo, BacktestSummary } from '@polarium12c/shared';
+
+export type AutoAnalysisState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'empty' }
+  | { status: 'done'; summary: BacktestSummary; assets: AssetInfo[] }
+  | { status: 'error'; message: string };
 
 function winRate(t: { wins: number; losses: number; dojis: number }): number | null {
   const total = t.wins + t.losses + t.dojis;
@@ -11,7 +18,7 @@ function formatPct(p: number | null): string {
 
 /**
  * Consolidado (nao dia-a-dia) dos ultimos 7 dias da estrategia 12 Candles sobre todos os
- * ativos OTC digital disponiveis, rodado automaticamente ao logar (ver runAutoAnalysis em App.tsx).
+ * ativos OTC digital disponiveis — disparado pelo botao em MonitorPage.
  */
 export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
   if (state.status === 'idle') return null;
@@ -55,7 +62,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
       <div>
         <div className="font-semibold text-sky-200">Análise automática — últimos 7 dias (OTC digital)</div>
         <p className="text-xs text-slate-400 mt-0.5">
-          Rodada ao logar, sobre todos os {assets.length} ativos OTC digital disponíveis. Consolidado — não é garantia futura.
+          Sobre todos os {assets.length} ativos OTC digital disponíveis. Consolidado — não é garantia futura.
         </p>
       </div>
 

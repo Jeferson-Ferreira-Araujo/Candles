@@ -2,17 +2,17 @@ import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
 import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
-import type { AutoAnalysisState } from '../App.js';
 import { PatternCard } from '../components/PatternCard.js';
-import { AutoAnalysisCard } from '../components/AutoAnalysisCard.js';
+import { AutoAnalysisCard, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
 import { api } from '../api.js';
 
 interface OutletCtx {
   events: AppEvent[];
   settings: Settings | null;
-  autoAnalysis: AutoAnalysisState;
 }
+
+const AUTO_ANALYSIS_DAYS = 7;
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -37,10 +37,11 @@ function describeEvent(e: AppEvent): string {
 }
 
 export function MonitorPage() {
-  const { events, settings, autoAnalysis } = useOutletContext<OutletCtx>();
+  const { events, settings } = useOutletContext<OutletCtx>();
   const progressByActive = usePatternProgress(events);
   const activeIds = settings?.selectedActiveIds ?? [];
   const [assets, setAssets] = useState<AssetInfo[]>([]);
+  const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisState>({ status: 'idle' });
 
   useEffect(() => {
     api.getAssets().then(setAssets).catch(() => {});
@@ -50,11 +51,45 @@ export function MonitorPage() {
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   }
 
+  // Sob demanda (botao), nao mais automatico no login — evita atrasar o fluxo de login
+  // com uma varredura de 7 dias sobre todos os ativos OTC digital antes de liberar a tela.
+  async function runAutoAnalysis() {
+    setAutoAnalysis({ status: 'loading' });
+    try {
+      const allAssets = await api.getAssets();
+      if (allAssets.length === 0) {
+        setAutoAnalysis({ status: 'empty' });
+        return;
+      }
+      const { summary } = await api.runBacktest(
+        allAssets.map((a) => a.id),
+        AUTO_ANALYSIS_DAYS
+      );
+      setAutoAnalysis({ status: 'done', summary, assets: allAssets });
+    } catch (err) {
+      setAutoAnalysis({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold">Monitor de Ativos</h1>
         <p className="text-slate-400 text-sm">Acompanhamento em tempo real da formação da estratégia 12 Candles.</p>
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div className="font-semibold">Análise dos últimos 7 dias</div>
+          <p className="text-xs text-slate-500 mt-0.5">Consolida wins, losses e assertividade por ativo OTC digital.</p>
+        </div>
+        <button
+          onClick={runAutoAnalysis}
+          disabled={autoAnalysis.status === 'loading'}
+          className="rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold shrink-0"
+        >
+          {autoAnalysis.status === 'loading' ? 'Analisando...' : 'Rodar análise'}
+        </button>
       </div>
 
       <AutoAnalysisCard state={autoAnalysis} />
