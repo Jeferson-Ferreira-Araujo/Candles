@@ -34,10 +34,18 @@ export type AutoAnalysisState =
       days: number;
       /** Direcao de entrada do padrao usado nesta execucao (derivada da cor da ultima casa do padrao). */
       entryDirection: Direction;
-      /** Sempre presente (Gale 1 e calculado em toda execucao, sem depender de nenhuma configuracao). */
+      /**
+       * Sempre presente (Gale 1 e calculado em toda execucao, sem depender de nenhuma
+       * configuracao). combined* MISTURA os wins diretos da 1a entrada com a reentrada — ver
+       * shared/types.ts (BacktestSummary.reentry) para a explicacao completa de por que isso
+       * sempre parece "melhor" do que a reentrada sozinha realmente e. reentryOnly* isola so
+       * quem perdeu a 1a entrada — esse e o numero real de "se eu sempre reentrar, qual minha chance".
+       */
       reentry: {
-        combinedSameDirection: AssetTally; // resultado final: 1a entrada (entryDirection), e se perder, gale repetindo a mesma direcao
-        combinedOppositeDirection: AssetTally; // idem, mas gale invertendo para a direcao contraria
+        combinedSameDirection: AssetTally;
+        combinedOppositeDirection: AssetTally;
+        reentryOnlySameDirection: AssetTally;
+        reentryOnlyOppositeDirection: AssetTally;
         consideredLosses: number;
         missingCandle14: number;
       };
@@ -280,9 +288,10 @@ export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCa
 
       <div className="border-t border-sky-900 pt-4">
         <div className="text-xs text-slate-500 mb-2">
-          Com Gale 1 — se a 1ª entrada perder, reentra na vela seguinte ({reentry.consideredLosses} LOSS
+          Resultado final combinado — se a 1ª entrada perder, reentra na vela seguinte ({reentry.consideredLosses} LOSS
           consideradas
-          {reentry.missingCandle14 > 0 && `, ${reentry.missingCandle14} sem vela seguinte disponível e ignoradas`})
+          {reentry.missingCandle14 > 0 && `, ${reentry.missingCandle14} sem vela seguinte disponível e ignoradas`}).{' '}
+          <span className="text-amber-400">Mistura wins diretos da 1ª entrada com a reentrada — ver abaixo a taxa isolada.</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
@@ -306,6 +315,40 @@ export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCa
               )}
               <span className="font-semibold text-white ml-auto">
                 {formatPct(winRate(reentry.combinedOppositeDirection))}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-sky-900 pt-4">
+        <div className="text-xs text-slate-500 mb-2">
+          Taxa real da reentrada isolada — só entre as {reentry.consideredLosses} vezes que a 1ª entrada perdeu, sem
+          contar os wins diretos junto.{' '}
+          <span className="text-emerald-400">Esse é o número que responde "se eu sempre reentrar, qual minha chance real".</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg bg-slate-950/60 border border-emerald-900 p-3">
+            <div className="text-xs text-slate-500 mb-1">Reentrada mesma direção ({entryDirection})</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.reentryOnlySameDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.reentryOnlySameDirection.losses}L</span>
+              {reentry.reentryOnlySameDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.reentryOnlySameDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.reentryOnlySameDirection))}</span>
+            </div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-emerald-900 p-3">
+            <div className="text-xs text-slate-500 mb-1">Reentrada direção contrária ({oppositeDirection})</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.reentryOnlyOppositeDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.reentryOnlyOppositeDirection.losses}L</span>
+              {reentry.reentryOnlyOppositeDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.reentryOnlyOppositeDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">
+                {formatPct(winRate(reentry.reentryOnlyOppositeDirection))}
               </span>
             </div>
           </div>

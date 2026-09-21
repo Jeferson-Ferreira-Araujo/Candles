@@ -217,17 +217,28 @@ export interface BacktestSummary {
   perAsset: Record<number, { wins: number; losses: number; dojis: number }>;
   /**
    * Sempre calculado, em toda execucao (nao depende de nenhum toggle): resultado FINAL de
-   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre ENTRY_DIRECTION) ja
-   * ganhou, conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada no
-   * candle seguinte (candle14), simulada nas duas direcoes possiveis (repetindo ENTRY_DIRECTION
-   * ou invertendo para a outra), para comparar as duas ao lado do resultado "so 1a entrada"
-   * (allOccurrences).
+   * cada ocorrencia assumindo Gale 1 — se a 1a entrada (candle13, sempre a direcao do padrao
+   * ativo) ja ganhou, conta como WIN direto; se perdeu, o resultado passa a ser o da reentrada
+   * no candle seguinte (candle14), simulada nas duas direcoes possiveis (repetindo a mesma
+   * direcao ou invertendo para a contraria).
+   *
+   * IMPORTANTE — "combined" vs "reentryOnly": os campos combined* MISTURAM duas populacoes
+   * (as ocorrencias que ja ganharam direto na 1a entrada + as que perderam e foram resgatadas
+   * pela reentrada), entao a taxa deles SEMPRE parece melhor do que a reentrada sozinha
+   * realmente e — nao da pra ler "combinedOppositeDirection = 79%" como "a reentrada acerta
+   * 79%". Os campos reentryOnly* isolam SO a populacao que perdeu a 1a entrada (consideredLosses)
+   * e mostram o resultado real de reentrar nela — esse e o numero que responde "se eu sempre
+   * reentrar depois de perder, qual e minha chance real".
    */
   reentry: {
-    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale repetindo ENTRY_DIRECTION
-    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale invertendo para a direcao contraria
-    consideredLosses: number; // quantas ocorrencias perderam a 1a entrada (candidatas ao gale)
-    missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo) — excluidas dos combinados acima
+    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale repetindo a mesma direcao — MISTURA populacoes, ver comentario acima
+    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale invertendo para a direcao contraria — MISTURA populacoes, ver comentario acima
+    /** Taxa ISOLADA da reentrada (repetindo a direcao da 1a entrada), so entre quem perdeu a 1a entrada — nao inclui os wins diretos. */
+    reentryOnlySameDirection: { wins: number; losses: number; dojis: number };
+    /** Taxa ISOLADA da reentrada (invertendo a direcao), so entre quem perdeu a 1a entrada — nao inclui os wins diretos. */
+    reentryOnlyOppositeDirection: { wins: number; losses: number; dojis: number };
+    consideredLosses: number; // quantas ocorrencias perderam a 1a entrada (candidatas ao gale) — total da populacao usada nos reentryOnly*
+    missingCandle14: number; // dessas, quantas nao tinham candle14 disponivel (fim do periodo) — excluidas de todos os campos acima
   };
 }
 

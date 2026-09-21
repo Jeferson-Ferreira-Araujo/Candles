@@ -79,6 +79,21 @@ function combineWithGale1(occurrences: PatternOccurrence[], reentryDirection: 'C
   return results;
 }
 
+/**
+ * Taxa ISOLADA da reentrada: so entre as ocorrencias que perderam a 1a entrada, qual o
+ * resultado real de reentrar na direcao pedida — SEM misturar com os wins diretos da 1a
+ * entrada (ao contrario de combineWithGale1, que mistura as duas populacoes e por isso sempre
+ * parece "melhor" do que a reentrada sozinha realmente e).
+ */
+function reentryOnlyResults(occurrences: PatternOccurrence[], reentryDirection: 'CALL' | 'PUT'): TradeResult[] {
+  const results: TradeResult[] = [];
+  for (const o of occurrences) {
+    if (o.result !== 'LOSS' || !o.candle14) continue;
+    results.push(reentryDirection === 'CALL' ? computeResultForCall(o.candle14) : computeResultForPut(o.candle14));
+  }
+  return results;
+}
+
 function tally(occs: PatternOccurrence[]): { wins: number; losses: number; dojis: number } {
   let wins = 0;
   let losses = 0;
@@ -150,6 +165,8 @@ function buildSummary(
   const reentry: BacktestSummary['reentry'] = {
     combinedSameDirection: tallyResults(combineWithGale1(occurrences, entryDirection)),
     combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, oppositeDirection(entryDirection))),
+    reentryOnlySameDirection: tallyResults(reentryOnlyResults(occurrences, entryDirection)),
+    reentryOnlyOppositeDirection: tallyResults(reentryOnlyResults(occurrences, oppositeDirection(entryDirection))),
     consideredLosses: lossOccurrences.length,
     missingCandle14: lossOccurrences.length - lossesWithCandle14.length,
   };

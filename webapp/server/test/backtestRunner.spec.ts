@@ -153,6 +153,9 @@ describe('runBacktest', () => {
     expect(summary.reentry.combinedSameDirection).toEqual({ wins: 1, losses: 1, dojis: 0 });
     // Gale direcao contraria (CALL): WIN direto (ativo A) passa igual + candle14 em alta -> CALL ganha = 2 wins.
     expect(summary.reentry.combinedOppositeDirection).toEqual({ wins: 2, losses: 0, dojis: 0 });
+    // Isolado (SO o ativo B, sem misturar o win direto do ativo A): candle14 em alta -> PUT perde, CALL ganha.
+    expect(summary.reentry.reentryOnlySameDirection).toEqual({ wins: 0, losses: 1, dojis: 0 });
+    expect(summary.reentry.reentryOnlyOppositeDirection).toEqual({ wins: 1, losses: 0, dojis: 0 });
   });
 
   it('perDay inclui dias sem nenhum sinal (bucket NONE) para todo o periodo pedido', async () => {
