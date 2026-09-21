@@ -18,20 +18,30 @@ function green(activeId: number, from: number): Candle {
 function red(activeId: number, from: number): Candle {
   return { activeId, size: SIZE, from, to: from + SIZE, open: 2, close: 1, high: 2, low: 1, isClosed: true };
 }
+/** Vela com pavio inferior controlado (fracao do range, 0..1) — usada para a vela de sinal (regra final de pavio). */
+function withWick(activeId: number, from: number, color: CandleColor, wickFraction: number): Candle {
+  return color === 'G'
+    ? { activeId, size: SIZE, from, to: from + SIZE, open: wickFraction * 100, close: 100, high: 100, low: 0, isClosed: true }
+    : { activeId, size: SIZE, from, to: from + SIZE, open: 100, close: wickFraction * 100, high: 100, low: 0, isClosed: true };
+}
 
 /**
  * Constroi N ocorrencias consecutivas e nao sobrepostas do padrao completo (CONFIRM_PATTERN.length
- * velas do padrao + 1 vela de entrada). A entrada e sempre DIRECTION (PUT) — entao
- * `entryCandleUp=true` (vela de entrada verde) produz LOSS, e `false` (vermelha) produz WIN.
+ * velas do padrao + 1 vela de entrada). A ULTIMA vela do padrao (a de sinal) sempre leva um
+ * pavio de 50% (acima do minimo de 25% exigido pela regra final), para nao reprovar por padrao
+ * em testes que nao estao testando essa regra especificamente. A entrada e sempre DIRECTION
+ * (PUT) — entao `entryCandleUp=true` (vela de entrada verde) produz LOSS, e `false` (vermelha)
+ * produz WIN.
  */
 function buildOccurrences(activeId: number, baseFrom: number, count: number, entryCandleUp: boolean): Candle[] {
   const candles: Candle[] = [];
   let from = baseFrom;
   for (let n = 0; n < count; n++) {
-    for (const color of CONFIRM_PATTERN) {
-      candles.push(color === 'G' ? green(activeId, from) : red(activeId, from));
+    CONFIRM_PATTERN.forEach((color, i) => {
+      const isSignal = i === CONFIRM_PATTERN.length - 1;
+      candles.push(isSignal ? withWick(activeId, from, color, 0.5) : color === 'G' ? green(activeId, from) : red(activeId, from));
       from += SIZE;
-    }
+    });
     // Vela de entrada (candle13 no tipo PatternOccurrence) + 1 candle "separador" neutro para
     // nao encostar na proxima ocorrencia.
     candles.push(entryCandleUp ? green(activeId, from) : red(activeId, from));

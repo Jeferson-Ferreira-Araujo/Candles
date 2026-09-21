@@ -20,9 +20,18 @@ function red(from: number): Candle {
   return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 2, close: 1, high: 2, low: 1, isClosed: true };
 }
 
+/** Vela com pavio inferior controlado (fracao do range, 0..1) — usada para a vela de sinal (regra final de pavio). */
+function withWick(from: number, color: CandleColor, wickFraction: number): Candle {
+  return color === 'G'
+    ? { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: wickFraction * 100, close: 100, high: 100, low: 0, isClosed: true }
+    : { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 100, close: wickFraction * 100, high: 100, low: 0, isClosed: true };
+}
+
+/** A ULTIMA vela (a de sinal) sempre leva pavio de 50%, acima do minimo de 25% exigido. */
 function buildTwelve(baseFrom: number): Candle[] {
   return CONFIRM_PATTERN.map((color: CandleColor, i: number) => {
     const from = baseFrom + i * SIZE;
+    if (i === CONFIRM_PATTERN.length - 1) return withWick(from, color, 0.5);
     return color === 'G' ? green(from) : red(from);
   });
 }

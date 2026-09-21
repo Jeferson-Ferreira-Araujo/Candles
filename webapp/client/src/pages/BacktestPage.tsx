@@ -139,6 +139,9 @@ export function BacktestPage() {
                 <div key={occ.id} className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
                   <span className="text-slate-600 w-40 shrink-0">{new Date(occ.occurredAt * 1000).toLocaleString('pt-BR')}</span>
                   <span className="w-28 shrink-0">{nameOf(occ.activeId)}</span>
+                  <span className="w-20 shrink-0" title="Pavio inferior da vela de sinal (mínimo exigido: 25%)">
+                    pavio {(occ.wickPercentage11 * 100).toFixed(1)}%
+                  </span>
                   <span
                     className={
                       occ.result === 'WIN' ? 'text-emerald-400' : occ.result === 'LOSS' ? 'text-rose-400' : 'text-slate-400'

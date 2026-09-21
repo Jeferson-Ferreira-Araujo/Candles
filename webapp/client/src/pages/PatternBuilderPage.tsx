@@ -127,6 +127,10 @@ export function PatternBuilderPage() {
           Monte seu próprio padrão de velas clicando em verde ou vermelho em cada casa. A penúltima casa é o sinal de
           confirmação; a última é a vela de entrada — a cor dela define a direção (vermelha = PUT, verde = CALL).
         </p>
+        <p className="text-slate-500 text-xs mt-1">
+          Regra final (vale para qualquer padrão): a vela de sinal (penúltima casa) só confirma se o pavio inferior
+          dela for pelo menos 25% do range da vela — sem isso, a ocorrência não é contada.
+        </p>
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-4">

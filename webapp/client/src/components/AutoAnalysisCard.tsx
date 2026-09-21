@@ -90,6 +90,9 @@ function OccurrencePattern({ occurrence }: { occurrence: PatternOccurrence }) {
           />
         )}
       </div>
+      <span className="text-slate-500" title="Pavio inferior da vela de sinal (mínimo exigido: 25%)">
+        pavio {(occurrence.wickPercentage11 * 100).toFixed(1)}%
+      </span>
       <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${RESULT_STYLE[occurrence.result ?? ''] ?? 'bg-slate-800 text-slate-400'}`}>
         {occurrence.result ?? 'sem dado'}
       </span>

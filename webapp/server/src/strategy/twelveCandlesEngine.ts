@@ -1,7 +1,12 @@
-import { candleColor, patternDisplayState, type Candle, type CandleColor, type PatternProgress } from '@polarium12c/shared';
-
-/** wickPercentage11 nao e mais calculado (regra de pavio retirada) — sentinela mantido so por compatibilidade de schema/tipos. */
-const WICK_NOT_APPLICABLE = 1;
+import {
+  candleColor,
+  lowerWickPercentage,
+  patternDisplayState,
+  SIGNAL_WICK_MIN_LOWER_PERCENTAGE,
+  type Candle,
+  type CandleColor,
+  type PatternProgress,
+} from '@polarium12c/shared';
 
 /**
  * Motor do padrao customizado ativo.
@@ -14,11 +19,23 @@ const WICK_NOT_APPLICABLE = 1;
  * do zero a cada tick sobre uma janela deslizante, suporta padroes sobrepostos sem nenhuma
  * logica extra de "continuar apos confirmar". Generaliza automaticamente para qualquer
  * padrao/tamanho definido pelo usuario na tela de edicao de padrao.
+ *
+ * Regra final (ver SIGNAL_WICK_MIN_LOWER_PERCENTAGE em strategyRule.ts): so quando o prefixo
+ * inteiro casa, verifica se a VELA DE SINAL (a ultima do prefixo, a que acabou de fechar)
+ * tem pavio inferior >= 25% do seu range. Se nao tiver, a ocorrencia e INVALIDATED — nao
+ * confirma, nao gera sinal/ordem, nao entra em nenhuma analise.
  */
 
 export type TwelveCandlesTick =
   | { kind: 'PROGRESS'; progress: PatternProgress }
-  | { kind: 'CONFIRMED'; progress: PatternProgress; window: Candle[]; wickPercentage11: number };
+  | { kind: 'CONFIRMED'; progress: PatternProgress; window: Candle[]; wickPercentage11: number }
+  | {
+      kind: 'INVALIDATED';
+      progress: PatternProgress;
+      window: Candle[];
+      reason: 'WICK_BELOW_MINIMUM' | 'ZERO_RANGE';
+      wickPercentage11: number | null;
+    };
 
 interface ActiveState {
   buffer: Candle[];
@@ -92,10 +109,37 @@ export class TwelveCandlesEngine {
 
     if (matchedLength === this.patternLength) {
       const window = trimmed.slice(trimmed.length - this.patternLength);
+      const signalCandle = window[window.length - 1]!;
+      const wickPct = lowerWickPercentage(signalCandle);
+
+      if (wickPct === null) {
+        // Candle degenerado (high === low) — nao da pra medir pavio, reprova a regra.
+        // Reverte a exibicao para um passo antes, ja que essa janela nao confirma.
+        state.matchedLength = this.patternLength - 1;
+        return {
+          kind: 'INVALIDATED',
+          window,
+          reason: 'ZERO_RANGE',
+          wickPercentage11: null,
+          progress: this.buildProgress(activeId, state, this.patternLength - 1),
+        };
+      }
+
+      if (wickPct < SIGNAL_WICK_MIN_LOWER_PERCENTAGE) {
+        state.matchedLength = this.patternLength - 1;
+        return {
+          kind: 'INVALIDATED',
+          window,
+          reason: 'WICK_BELOW_MINIMUM',
+          wickPercentage11: wickPct,
+          progress: this.buildProgress(activeId, state, this.patternLength - 1),
+        };
+      }
+
       return {
         kind: 'CONFIRMED',
         window,
-        wickPercentage11: WICK_NOT_APPLICABLE,
+        wickPercentage11: wickPct,
         progress: this.buildProgress(activeId, state, this.patternLength),
       };
     }

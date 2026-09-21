@@ -86,8 +86,8 @@ export class LiveMonitorService extends EventEmitter {
   }
 
   private async handleCandle(activeId: number, candle: Candle): Promise<void> {
-    // Candle ainda se formando: sem a regra de pavio, nao ha nenhum preview possivel —
-    // nunca alimenta o engine ("nunca confirmar usando candle ainda aberto").
+    // Candle ainda se formando: nunca alimenta o engine ("nunca confirmar usando candle
+    // ainda aberto").
     if (!candle.isClosed) return;
 
     await saveCandle(this.db, candle, 'live');
@@ -97,6 +97,17 @@ export class LiveMonitorService extends EventEmitter {
 
     if (tick.kind === 'PROGRESS') {
       this.emitEvent('PATTERN_PROGRESS', activeId, { progress: tick.progress });
+      return;
+    }
+
+    if (tick.kind === 'INVALIDATED') {
+      // Prefixo bateu, mas a vela de sinal nao teve pavio suficiente — nao gera ordem.
+      this.emitEvent('PATTERN_INVALIDATED', activeId, {
+        progress: tick.progress,
+        reason: tick.reason,
+        wickPercentage11: tick.wickPercentage11,
+        window: tick.window,
+      });
       return;
     }
 

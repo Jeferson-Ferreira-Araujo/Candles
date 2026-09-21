@@ -104,7 +104,7 @@ export function MonitorPage() {
         <h1 className="text-xl sm:text-2xl font-bold">Monitor de Ativos</h1>
         <p className="text-slate-400 text-sm">
           {activePattern
-            ? `Acompanhamento em tempo real da formação do padrão "${activePattern.name}" (${patternLength} velas + entrada ${entryDirection} na seguinte).`
+            ? `Acompanhamento em tempo real da formação do padrão "${activePattern.name}" (${patternLength} velas + entrada ${entryDirection} na seguinte). A vela de sinal só confirma com pavio inferior de pelo menos 25%.`
             : 'Nenhum padrão ativo ainda.'}
         </p>
       </div>
