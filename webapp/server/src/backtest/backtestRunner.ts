@@ -14,6 +14,7 @@ import {
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { TwelveCandlesEngine } from '../strategy/twelveCandlesEngine.js';
 import { finishBacktest, insertBacktest, insertBacktestOccurrence } from '../db/repositories.js';
+import { computeResultForCall, computeResultForDirection, computeResultForPut, oppositeDirection } from '../util/tradeResult.js';
 
 export interface BacktestResult {
   run: BacktestRun;
@@ -23,28 +24,6 @@ export interface BacktestResult {
 
 function isoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
-}
-
-/** Ganha quando o candle fecha ACIMA da abertura — resultado de uma entrada CALL nesse candle. */
-function computeResultForCall(candle: Candle): TradeResult {
-  if (candle.close > candle.open) return 'WIN';
-  if (candle.close < candle.open) return 'LOSS';
-  return 'DOJI';
-}
-
-/** Ganha quando o candle fecha ABAIXO da abertura — resultado de uma entrada PUT nesse candle. */
-function computeResultForPut(candle: Candle): TradeResult {
-  if (candle.close < candle.open) return 'WIN';
-  if (candle.close > candle.open) return 'LOSS';
-  return 'DOJI';
-}
-
-function computeResultForDirection(candle: Candle, direction: Direction): TradeResult {
-  return direction === 'CALL' ? computeResultForCall(candle) : computeResultForPut(candle);
-}
-
-function oppositeDirection(direction: Direction): Direction {
-  return direction === 'CALL' ? 'PUT' : 'CALL';
 }
 
 function tallyResults(results: TradeResult[]): { wins: number; losses: number; dojis: number } {
