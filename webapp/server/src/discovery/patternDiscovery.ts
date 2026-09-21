@@ -114,7 +114,7 @@ export function discoverPatterns(candles: Candle[]): DiscoveredPattern[] {
     });
   }
 
-  results.sort((a, b) => b.bestDayCount - a.bestDayCount || b.totalOccurrences - a.totalOccurrences);
+  results.sort((a, b) => b.totalOccurrences - a.totalOccurrences || b.bestDayCount - a.bestDayCount);
   return results.slice(0, MAX_RESULTS);
 }
 

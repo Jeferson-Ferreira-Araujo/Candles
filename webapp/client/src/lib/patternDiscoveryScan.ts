@@ -40,7 +40,7 @@ export async function runPatternDiscoveryScan(
   const workerCount = Math.min(SCAN_CONCURRENCY, allAssets.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  rows.sort((a, b) => b.pattern.bestDayCount - a.pattern.bestDayCount || b.pattern.totalOccurrences - a.pattern.totalOccurrences);
+  rows.sort((a, b) => b.pattern.totalOccurrences - a.pattern.totalOccurrences || b.pattern.bestDayCount - a.pattern.bestDayCount);
 
   return { status: 'done', rows, scannedAssets: allAssets.length, failedCount, elapsedMs: Date.now() - startedAt, days };
 }
