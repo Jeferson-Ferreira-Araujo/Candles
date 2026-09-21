@@ -44,16 +44,26 @@ function buildOccurrences(activeId: number, baseFrom: number, count: number, ent
 }
 
 /**
- * Ancora um timestamp dentro do dia UTC atual, longe o suficiente da meia-noite para que
- * nenhuma sequencia curta de candles construida a partir dele possa atravessar a virada de
- * dia. Usar `Date.now() - Nh` diretamente e fragil: perto da meia-noite UTC, isso pode cair
- * no dia ANTERIOR e quebrar testes que dependem de duas ocorrencias caindo no mesmo dia
- * (exatamente o que aconteceu ao rodar este teste as ~05h UTC).
+ * Ancora um timestamp SEMPRE no passado (nunca no futuro relativo a `Date.now()`, que e o
+ * limite superior que runBacktest usa para buscar historico) e longe o suficiente de uma
+ * virada de dia UTC para que nenhuma sequencia curta de candles construida a partir dele
+ * possa atravessar meia-noite.
+ *
+ * Ancorar direto em "02:00 UTC de hoje" (versao anterior) e fragil de duas formas opostas:
+ * perto da meia-noite UTC isso pode cair no dia ANTERIOR (quebra testes que dependem de duas
+ * ocorrencias no mesmo dia), e ENTRE meia-noite e ~02h UTC isso cai no FUTURO relativo a
+ * `now()` — os candles sinteticos ficam fora da janela `to=now` do runBacktest e o teste ve
+ * zero ocorrencias (exatamente o que aconteceu rodando este teste as ~01h40 UTC).
+ *
+ * Corrigido ancorando 6h no passado e so entao arredondando para as 02:00 UTC do dia desse
+ * ponto — no pior caso (ancora logo antes da meia-noite do seu proprio dia) isso ainda fica
+ * pelo menos ~4h antes de `now()`, nunca no futuro.
  */
 function safeDayStart(): number {
   const now = Math.floor(Date.now() / 1000);
-  const todayMidnightUtc = Math.floor(now / 86_400) * 86_400;
-  return todayMidnightUtc + 2 * 60 * 60; // 02:00 UTC do dia atual
+  const sixHoursAgo = now - 6 * 60 * 60;
+  const thatDayMidnightUtc = Math.floor(sixHoursAgo / 86_400) * 86_400;
+  return thatDayMidnightUtc + 2 * 60 * 60; // 02:00 UTC do dia de "6h atras"
 }
 
 describe('runBacktest', () => {
