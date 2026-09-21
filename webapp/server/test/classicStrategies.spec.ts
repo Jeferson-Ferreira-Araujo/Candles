@@ -243,3 +243,188 @@ describe('runClassicStrategy — compression_breakout', () => {
     expect(result.occurrences).toHaveLength(0);
   });
 });
+
+describe('runClassicStrategy — inside_bar_breakout', () => {
+  it('detecta inside bar seguida de rompimento de alta e confirma CALL', async () => {
+    let from = BASE;
+    const candles: Candle[] = [candle(from, 20, 100, 0, 80)]; // vela-mae, range [0,100]
+    from += SIZE;
+    candles.push(candle(from, 40, 80, 20, 60)); // inside bar: dentro de [0,100]
+    from += SIZE;
+    candles.push(candle(from, 90, 120, 90, 110)); // rompimento: fecha acima de 100
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'inside_bar_breakout' });
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0]!.direction).toBe('CALL');
+  });
+
+  it('nao detecta quando o rompimento nao fecha alem do range da vela-mae', async () => {
+    let from = BASE;
+    const candles: Candle[] = [candle(from, 20, 100, 0, 80)];
+    from += SIZE;
+    candles.push(candle(from, 40, 80, 20, 60)); // inside bar
+    from += SIZE;
+    candles.push(candle(from, 60, 95, 55, 90)); // fecha dentro do range da mae (90 < 100)
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'inside_bar_breakout' });
+    expect(result.occurrences).toHaveLength(0);
+  });
+});
+
+describe('runClassicStrategy — fakeout', () => {
+  it('detecta fakeout de baixa (rompe minima e fecha de volta acima) e confirma CALL', async () => {
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 5; i++) {
+      candles.push(candle(from, 60, 70, 50, 65)); // lookback: low sempre 50
+      from += SIZE;
+    }
+    candles.push(candle(from, 59, 61, 40, 60)); // rompe 50 (low=40) mas fecha em 60 (> 50), pavio forte
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'fakeout' });
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0]!.direction).toBe('CALL');
+  });
+
+  it('nao detecta quando o pavio de rejeicao e pequeno demais', async () => {
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 5; i++) {
+      candles.push(candle(from, 60, 70, 50, 65));
+      from += SIZE;
+    }
+    candles.push(candle(from, 41, 61, 40, 60)); // rompe e fecha de volta, mas pavio inferior so 1/21 ~ 5%
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'fakeout' });
+    expect(result.occurrences).toHaveLength(0);
+  });
+});
+
+describe('runClassicStrategy — three_soldiers', () => {
+  it('detecta 3 velas verdes com corpos fortes e progressao e confirma CALL na 4a', async () => {
+    let from = BASE;
+    const candles: Candle[] = [
+      candle(from, 10, 102, 10, 100), // corpo 90/92 ~ 0.98, pavio superior 2/92 ~ 0.02
+    ];
+    from += SIZE;
+    candles.push(candle(from, 100, 152, 100, 150)); // fecha mais alto que a anterior
+    from += SIZE;
+    candles.push(candle(from, 150, 202, 150, 200)); // fecha mais alto ainda
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'three_soldiers' });
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0]!.direction).toBe('CALL');
+  });
+
+  it('nao detecta quando uma das velas tem corpo fraco', async () => {
+    let from = BASE;
+    const candles: Candle[] = [candle(from, 10, 102, 10, 100)];
+    from += SIZE;
+    candles.push(candle(from, 100, 160, 100, 110)); // corpo pequeno (10/60 ~ 0.17)
+    from += SIZE;
+    candles.push(candle(from, 110, 210, 110, 200));
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'three_soldiers' });
+    expect(result.occurrences).toHaveLength(0);
+  });
+});
+
+describe('runClassicStrategy — impulse_pullback_50', () => {
+  it('detecta impulso + pullback de 30-50% contido no impulso e confirma CALL', async () => {
+    const params_medianLookback = 10;
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < params_medianLookback; i++) {
+      candles.push(solid(from, i % 2 === 0 ? 'G' : 'R', 4)); // range pequeno para a mediana
+      from += SIZE;
+    }
+    candles.push(solid(from, 'G', 20)); // impulso: range 20
+    from += SIZE;
+    candles.push(candle(from, 20, 20, 12, 12)); // pullback: contido em [0,20], corpo 8 (40% de 20)
+    from += SIZE;
+    candles.push(solid(from, 'G')); // entrada: WIN para CALL
+
+    const result = await run(candles, { id: 'impulse_pullback_50' });
+    expect(result.occurrences).toHaveLength(1);
+    expect(result.occurrences[0]!.direction).toBe('CALL');
+  });
+
+  it('nao detecta quando o pullback devolve mais que 50% do impulso', async () => {
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 10; i++) {
+      candles.push(solid(from, i % 2 === 0 ? 'G' : 'R', 4));
+      from += SIZE;
+    }
+    candles.push(solid(from, 'G', 20));
+    from += SIZE;
+    candles.push(candle(from, 20, 20, 5, 5)); // retrace de 15/20 = 75%
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'impulse_pullback_50' });
+    expect(result.occurrences).toHaveLength(0);
+  });
+});
+
+describe('runClassicStrategy — double_rejection', () => {
+  /** Vela "neutra" de preenchimento: range 10, pavio inferior fraco (nao deve casar como rejeicao). */
+  function filler(from: number): Candle {
+    return candle(from, 7, 10, 0, 3);
+  }
+
+  it('detecta duas rejeicoes de minima proximas e confirma CALL', async () => {
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 20; i++) {
+      candles.push(filler(from));
+      from += SIZE;
+    }
+    candles.push(candle(from, 8, 10, 0, 9)); // 1a rejeicao: low=0, pavio inferior forte
+    from += SIZE;
+    candles.push(filler(from));
+    from += SIZE;
+    candles.push(filler(from));
+    from += SIZE;
+    candles.push(candle(from, 9, 10, 1, 9.5)); // 2a rejeicao: low=1 (perto de 0), pavio forte, nao rompe abaixo
+    from += SIZE;
+    candles.push(solid(from, 'G')); // entrada
+
+    const result = await run(candles, { id: 'double_rejection' });
+    expect(result.occurrences.length).toBeGreaterThanOrEqual(1);
+    expect(result.occurrences[0]!.direction).toBe('CALL');
+  });
+
+  it('nao detecta quando a segunda rejeicao rompe bem abaixo da primeira', async () => {
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 20; i++) {
+      candles.push(filler(from));
+      from += SIZE;
+    }
+    candles.push(candle(from, 8, 10, 0, 9)); // 1a rejeicao: low=0
+    from += SIZE;
+    candles.push(filler(from));
+    from += SIZE;
+    candles.push(filler(from));
+    from += SIZE;
+    candles.push(candle(from, 9, 10, -20, 9.5)); // 2a "rejeicao": low bem abaixo da 1a (rompeu de verdade)
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+
+    const result = await run(candles, { id: 'double_rejection' });
+    expect(result.occurrences).toHaveLength(0);
+  });
+});

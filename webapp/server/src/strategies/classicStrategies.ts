@@ -38,6 +38,11 @@ const SIGNAL_METRIC_LABEL: Record<ClassicStrategyConfig['id'], string> = {
   pin_bar: 'Pavio da vela de sinal',
   impulse_pullback: 'Retração do pullback',
   compression_breakout: 'Corpo do rompimento',
+  inside_bar_breakout: 'Corpo do rompimento',
+  fakeout: 'Pavio de rejeição',
+  three_soldiers: 'Corpo médio das 3 velas',
+  impulse_pullback_50: 'Retração do pullback',
+  double_rejection: 'Pavio de rejeição (mais fraco dos dois)',
 };
 
 function bodySize(c: Candle): number {
@@ -214,6 +219,211 @@ function detectCompressionBreakout(
   return out;
 }
 
+// ---- As 5 estrategias abaixo nao tem params (regra fixa/classica, sem ajuste do usuario) ----
+
+const FAKEOUT_LOOKBACK = 5;
+const FAKEOUT_MIN_WICK_PERCENT = 0.5;
+
+/**
+ * Uma ou mais velas consecutivas dentro do range da vela-mae (inside bars), seguidas de
+ * rompimento fechando alem do range da mae — entra na proxima. `i` so inicia uma busca nova
+ * quando NAO for ele mesmo um inside bar do candle anterior, para nao contar a mesma
+ * compressao varias vezes (uma por posicao interna a ela).
+ */
+function detectInsideBarBreakout(candles: Candle[]): RawSignal[] {
+  const out: RawSignal[] = [];
+  for (let i = 0; i < candles.length - 1; i++) {
+    const mother = candles[i]!;
+    const prev = i > 0 ? candles[i - 1] : undefined;
+    // "mother" ja e parte de uma compressao anterior — so se aplica quando ha um candle antes pra comparar.
+    if (prev && mother.high < prev.high && mother.low > prev.low) continue;
+
+    let j = i + 1;
+    while (j < candles.length && candles[j]!.high < mother.high && candles[j]!.low > mother.low) j++;
+    if (j === i + 1) continue; // precisa de pelo menos 1 inside bar
+    if (j >= candles.length) continue; // sem candle de rompimento disponivel ainda
+
+    const breakout = candles[j]!;
+    const breakoutColor = candleColor(breakout);
+    if (breakoutColor === 'DOJI') continue;
+
+    let direction: Direction | null = null;
+    if (breakoutColor === 'G' && breakout.close > mother.high) direction = 'CALL';
+    else if (breakoutColor === 'R' && breakout.close < mother.low) direction = 'PUT';
+    if (!direction) continue;
+
+    const breakoutBody = bodyPercentage(breakout) ?? 0;
+    out.push({ entryIndex: j + 1, direction, setupWindow: candles.slice(i, j + 1), signalMetricValue: breakoutBody });
+  }
+  return out;
+}
+
+/**
+ * Rompe a maxima/minima das ultimas FAKEOUT_LOOKBACK velas mas fecha de volta DENTRO do
+ * range, com pavio de rejeicao forte do lado que rompeu — entra na proxima.
+ */
+function detectFakeout(candles: Candle[]): RawSignal[] {
+  const out: RawSignal[] = [];
+  for (let i = FAKEOUT_LOOKBACK; i < candles.length - 1; i++) {
+    const lookback = candles.slice(i - FAKEOUT_LOOKBACK, i);
+    const lookbackLow = Math.min(...lookback.map((c) => c.low));
+    const lookbackHigh = Math.max(...lookback.map((c) => c.high));
+    const c = candles[i]!;
+
+    let direction: Direction | null = null;
+    let wick = 0;
+    if (c.low < lookbackLow && c.close > lookbackLow) {
+      const lower = lowerWickPercentage(c);
+      if (lower !== null && lower >= FAKEOUT_MIN_WICK_PERCENT) {
+        direction = 'CALL';
+        wick = lower;
+      }
+    } else if (c.high > lookbackHigh && c.close < lookbackHigh) {
+      const upper = upperWickPercentage(c);
+      if (upper !== null && upper >= FAKEOUT_MIN_WICK_PERCENT) {
+        direction = 'PUT';
+        wick = upper;
+      }
+    }
+    if (!direction) continue;
+
+    out.push({ entryIndex: i + 1, direction, setupWindow: [...lookback, c], signalMetricValue: wick });
+  }
+  return out;
+}
+
+const THREE_SOLDIERS_MIN_BODY_PERCENT = 0.6;
+const THREE_SOLDIERS_MAX_OPPOSITE_WICK_PERCENT = 0.25;
+
+/**
+ * 3 velas da mesma cor, cada uma com corpo >= 60% do proprio range, fechamentos em progressao
+ * (cada uma alem da anterior) e pavio do lado oposto a direcao pequeno — testa continuacao na
+ * 4a vela.
+ */
+function detectThreeSoldiers(candles: Candle[]): RawSignal[] {
+  const out: RawSignal[] = [];
+  for (let i = 2; i < candles.length - 1; i++) {
+    const three = [candles[i - 2]!, candles[i - 1]!, candles[i]!];
+    const colors = three.map((c) => candleColor(c));
+    if (colors[0] === 'DOJI' || !colors.every((c) => c === colors[0])) continue;
+
+    const direction: Direction = colors[0] === 'G' ? 'CALL' : 'PUT';
+    const progressing =
+      direction === 'CALL'
+        ? three[1]!.close > three[0]!.close && three[2]!.close > three[1]!.close
+        : three[1]!.close < three[0]!.close && three[2]!.close < three[1]!.close;
+    if (!progressing) continue;
+
+    let strongBodies = true;
+    let bodySum = 0;
+    for (const c of three) {
+      const body = bodyPercentage(c);
+      const oppositeWick = direction === 'CALL' ? upperWickPercentage(c) : lowerWickPercentage(c);
+      if (body === null || body < THREE_SOLDIERS_MIN_BODY_PERCENT) strongBodies = false;
+      if (oppositeWick === null || oppositeWick > THREE_SOLDIERS_MAX_OPPOSITE_WICK_PERCENT) strongBodies = false;
+      bodySum += body ?? 0;
+    }
+    if (!strongBodies) continue;
+
+    out.push({ entryIndex: i + 1, direction, setupWindow: three, signalMetricValue: bodySum / three.length });
+  }
+  return out;
+}
+
+const IMPULSE_PULLBACK_50_MEDIAN_LOOKBACK = 10;
+const IMPULSE_PULLBACK_50_MIN_IMPULSE_MULTIPLIER = 1.5;
+const IMPULSE_PULLBACK_50_MIN_RETRACE = 0.3;
+const IMPULSE_PULLBACK_50_MAX_RETRACE = 0.5;
+
+/**
+ * Igual a impulse_pullback, mas com banda de retracao fixa em 30-50% (nao so um teto) e
+ * exigindo que o pullback fique CONTIDO dentro do range do candle de impulso.
+ */
+function detectImpulsePullback50(candles: Candle[]): RawSignal[] {
+  const out: RawSignal[] = [];
+  for (let i = IMPULSE_PULLBACK_50_MEDIAN_LOOKBACK; i < candles.length - 2; i++) {
+    const lookback = candles.slice(i - IMPULSE_PULLBACK_50_MEDIAN_LOOKBACK, i);
+    const medianRange = median(lookback.map(candleRange));
+    if (medianRange === 0) continue;
+
+    const impulse = candles[i]!;
+    const impulseColor = candleColor(impulse);
+    if (impulseColor === 'DOJI' || candleRange(impulse) < medianRange * IMPULSE_PULLBACK_50_MIN_IMPULSE_MULTIPLIER) continue;
+
+    const pullback = candles[i + 1]!;
+    const pullbackColor = candleColor(pullback);
+    if (pullbackColor === 'DOJI' || pullbackColor === impulseColor) continue;
+    if (pullback.high > impulse.high || pullback.low < impulse.low) continue; // precisa ficar contido no impulso
+
+    const impulseBody = bodySize(impulse);
+    if (impulseBody === 0) continue;
+    const retrace = bodySize(pullback) / impulseBody;
+    if (retrace < IMPULSE_PULLBACK_50_MIN_RETRACE || retrace > IMPULSE_PULLBACK_50_MAX_RETRACE) continue;
+
+    const direction: Direction = impulseColor === 'G' ? 'CALL' : 'PUT';
+    out.push({ entryIndex: i + 2, direction, setupWindow: [impulse, pullback], signalMetricValue: retrace });
+  }
+  return out;
+}
+
+const DOUBLE_REJECTION_MEDIAN_LOOKBACK = 20;
+const DOUBLE_REJECTION_SEARCH_WINDOW = 20;
+const DOUBLE_REJECTION_MIN_GAP = 2;
+const DOUBLE_REJECTION_MIN_WICK_PERCENT = 0.5;
+const DOUBLE_REJECTION_LEVEL_TOLERANCE_RATIO = 0.5; // fracao da mediana do range recente
+
+/**
+ * Duas velas com rejeicao forte (pavio grande) testando praticamente o mesmo nivel (minima
+ * para CALL, maxima para PUT), a segunda sem romper significativamente alem da primeira —
+ * entra na vela seguinte a segunda rejeicao. Tolerancia do nivel e proporcional ao range
+ * mediano recente (proxy de ATR), nao um valor fixo em pontos.
+ */
+function detectDoubleRejection(candles: Candle[]): RawSignal[] {
+  const out: RawSignal[] = [];
+  for (let i = DOUBLE_REJECTION_MEDIAN_LOOKBACK; i < candles.length - 1; i++) {
+    const medianRange = median(candles.slice(i - DOUBLE_REJECTION_MEDIAN_LOOKBACK, i).map(candleRange));
+    if (medianRange === 0) continue;
+    const tolerance = medianRange * DOUBLE_REJECTION_LEVEL_TOLERANCE_RATIO;
+
+    const second = candles[i]!;
+    const secondLowerWick = lowerWickPercentage(second);
+    const secondUpperWick = upperWickPercentage(second);
+
+    const searchStart = Math.max(0, i - DOUBLE_REJECTION_SEARCH_WINDOW);
+    const searchEnd = i - DOUBLE_REJECTION_MIN_GAP;
+
+    let matched: { direction: Direction; wick: number } | null = null;
+
+    if (secondLowerWick !== null && secondLowerWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT) {
+      for (let k = searchStart; k <= searchEnd; k++) {
+        const first = candles[k]!;
+        const firstLowerWick = lowerWickPercentage(first);
+        if (firstLowerWick === null || firstLowerWick < DOUBLE_REJECTION_MIN_WICK_PERCENT) continue;
+        if (Math.abs(second.low - first.low) > tolerance) continue;
+        if (second.low < first.low - tolerance) continue; // rompeu significativamente abaixo da primeira — nao conta
+        matched = { direction: 'CALL', wick: Math.min(firstLowerWick, secondLowerWick) };
+        break;
+      }
+    }
+
+    if (!matched && secondUpperWick !== null && secondUpperWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT) {
+      for (let k = searchStart; k <= searchEnd; k++) {
+        const first = candles[k]!;
+        const firstUpperWick = upperWickPercentage(first);
+        if (firstUpperWick === null || firstUpperWick < DOUBLE_REJECTION_MIN_WICK_PERCENT) continue;
+        if (Math.abs(second.high - first.high) > tolerance) continue;
+        if (second.high > first.high + tolerance) continue; // rompeu significativamente acima da primeira — nao conta
+        matched = { direction: 'PUT', wick: Math.min(firstUpperWick, secondUpperWick) };
+        break;
+      }
+    }
+
+    if (!matched) continue;
+    out.push({ entryIndex: i + 1, direction: matched.direction, setupWindow: [second], signalMetricValue: matched.wick });
+  }
+  return out;
+}
+
 function detectSignals(candles: Candle[], strategy: ClassicStrategyConfig): RawSignal[] {
   switch (strategy.id) {
     case 'sequence_reversal':
@@ -226,6 +436,16 @@ function detectSignals(candles: Candle[], strategy: ClassicStrategyConfig): RawS
       return detectImpulsePullback(candles, strategy.params);
     case 'compression_breakout':
       return detectCompressionBreakout(candles, strategy.params);
+    case 'inside_bar_breakout':
+      return detectInsideBarBreakout(candles);
+    case 'fakeout':
+      return detectFakeout(candles);
+    case 'three_soldiers':
+      return detectThreeSoldiers(candles);
+    case 'impulse_pullback_50':
+      return detectImpulsePullback50(candles);
+    case 'double_rejection':
+      return detectDoubleRejection(candles);
   }
 }
 

@@ -51,14 +51,35 @@ export interface CompressionBreakoutParams {
   direction: DirectionFilter;
 }
 
-export type ClassicStrategyId = 'sequence_reversal' | 'engulfing' | 'pin_bar' | 'impulse_pullback' | 'compression_breakout';
+export type ClassicStrategyId =
+  | 'sequence_reversal'
+  | 'engulfing'
+  | 'pin_bar'
+  | 'impulse_pullback'
+  | 'compression_breakout'
+  | 'inside_bar_breakout'
+  | 'fakeout'
+  | 'three_soldiers'
+  | 'impulse_pullback_50'
+  | 'double_rejection';
 
+/**
+ * As 5 estrategias abaixo (inside_bar_breakout .. double_rejection) nao tem params: seguem
+ * sempre a definicao classica/padrao da familia, sem nenhum ajuste exposto ao usuario — por
+ * pedido explicito, ao contrario das 5 primeiras (que mantiveram os params internamente,
+ * mesmo sem UI de edicao, por estabilidade de tipo/teste).
+ */
 export type ClassicStrategyConfig =
   | { id: 'sequence_reversal'; params: SequenceReversalParams }
   | { id: 'engulfing'; params: EngulfingParams }
   | { id: 'pin_bar'; params: PinBarParams }
   | { id: 'impulse_pullback'; params: ImpulsePullbackParams }
-  | { id: 'compression_breakout'; params: CompressionBreakoutParams };
+  | { id: 'compression_breakout'; params: CompressionBreakoutParams }
+  | { id: 'inside_bar_breakout' }
+  | { id: 'fakeout' }
+  | { id: 'three_soldiers' }
+  | { id: 'impulse_pullback_50' }
+  | { id: 'double_rejection' };
 
 export const DEFAULT_SEQUENCE_REVERSAL_PARAMS: SequenceReversalParams = {
   sequenceLength: 4,
@@ -106,6 +127,12 @@ export function defaultClassicStrategyConfig(id: ClassicStrategyId): ClassicStra
       return { id, params: DEFAULT_IMPULSE_PULLBACK_PARAMS };
     case 'compression_breakout':
       return { id, params: DEFAULT_COMPRESSION_BREAKOUT_PARAMS };
+    case 'inside_bar_breakout':
+    case 'fakeout':
+    case 'three_soldiers':
+    case 'impulse_pullback_50':
+    case 'double_rejection':
+      return { id };
   }
 }
 
@@ -140,6 +167,31 @@ export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
     id: 'compression_breakout',
     name: 'Compressão → Breakout',
     description: 'Bloco de velas pequenas seguido de um rompimento do range — entra na vela seguinte.',
+  },
+  {
+    id: 'inside_bar_breakout',
+    name: 'Inside Bar + Rompimento',
+    description: 'Uma ou mais velas dentro do range da vela-mãe, seguidas de rompimento — entra na vela seguinte.',
+  },
+  {
+    id: 'fakeout',
+    name: 'Falso Rompimento (Fakeout)',
+    description: 'Rompe a máxima/mínima das últimas 5 velas mas fecha de volta dentro do range — entra na vela seguinte.',
+  },
+  {
+    id: 'three_soldiers',
+    name: 'Três Candles de Impulso',
+    description: '3 velas da mesma cor com corpos fortes e progressão de preço — testa continuação na 4ª vela.',
+  },
+  {
+    id: 'impulse_pullback_50',
+    name: 'Pullback 50% do Impulso',
+    description: 'Impulso grande seguido de correção de 30–50% que fica contida na vela de impulso — entra na vela seguinte.',
+  },
+  {
+    id: 'double_rejection',
+    name: 'Dupla Rejeição de Nível',
+    description: 'Duas tentativas de romper quase o mesmo nível, ambas rejeitadas — entra na vela seguinte.',
   },
 ];
 

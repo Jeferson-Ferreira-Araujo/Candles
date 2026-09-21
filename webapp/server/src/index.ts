@@ -28,7 +28,7 @@ import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { runPatternDiscovery } from './discovery/patternDiscovery.js';
 import { runClassicStrategy } from './strategies/classicStrategies.js';
-import { defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
+import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
@@ -192,7 +192,7 @@ app.post('/api/pattern-discovery', async (req, res) => {
   }
 });
 
-const CLASSIC_STRATEGY_IDS: ClassicStrategyId[] = ['sequence_reversal', 'engulfing', 'pin_bar', 'impulse_pullback', 'compression_breakout'];
+const CLASSIC_STRATEGY_IDS: ClassicStrategyId[] = CLASSIC_STRATEGIES.map((s) => s.id);
 
 app.post('/api/classic-strategy', async (req, res) => {
   const { activeId, days, strategyId } = req.body as { activeId?: number; days?: number; strategyId?: ClassicStrategyId };
