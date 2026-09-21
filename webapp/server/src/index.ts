@@ -28,7 +28,7 @@ import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { runPatternDiscovery } from './discovery/patternDiscovery.js';
 import { runClassicStrategy } from './strategies/classicStrategies.js';
-import type { ClassicStrategyConfig } from '@polarium12c/shared';
+import { defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
@@ -192,19 +192,22 @@ app.post('/api/pattern-discovery', async (req, res) => {
   }
 });
 
-const CLASSIC_STRATEGY_IDS = ['sequence_reversal', 'engulfing', 'pin_bar', 'impulse_pullback', 'compression_breakout'];
+const CLASSIC_STRATEGY_IDS: ClassicStrategyId[] = ['sequence_reversal', 'engulfing', 'pin_bar', 'impulse_pullback', 'compression_breakout'];
 
 app.post('/api/classic-strategy', async (req, res) => {
-  const { activeId, days, strategy } = req.body as { activeId?: number; days?: number; strategy?: ClassicStrategyConfig };
+  const { activeId, days, strategyId } = req.body as { activeId?: number; days?: number; strategyId?: ClassicStrategyId };
   if (!Number.isFinite(activeId) || !Number.isFinite(days) || (days ?? 0) <= 0) {
     res.status(400).json({ error: 'Informe activeId e days (numero positivo).' });
     return;
   }
-  if (!strategy || typeof strategy !== 'object' || !CLASSIC_STRATEGY_IDS.includes(strategy.id) || typeof strategy.params !== 'object') {
-    res.status(400).json({ error: 'Informe uma estratégia válida (id + params).' });
+  if (!strategyId || !CLASSIC_STRATEGY_IDS.includes(strategyId)) {
+    res.status(400).json({ error: 'Informe um strategyId válido.' });
     return;
   }
   try {
+    // A regra de cada estrategia e sempre a definicao padrao (nao editavel pelo usuario) —
+    // ver defaultClassicStrategyConfig em shared/src/classicStrategies.ts.
+    const strategy = defaultClassicStrategyConfig(strategyId);
     const result = await runClassicStrategy(brokerManager.get(), activeId!, days!, strategy);
     res.json(result);
   } catch (err) {

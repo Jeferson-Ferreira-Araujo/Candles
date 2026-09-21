@@ -152,6 +152,8 @@ export interface ClassicOccurrence {
   direction: Direction;
   entryCandle?: Candle; // vela seguinte ao setup — pode faltar se for o ultimo candle do periodo
   result?: TradeResult;
+  /** Percentual (ou razao expressa como percentual) que mede a forca da vela de sinal desta ocorrencia especifica — ver ClassicStrategyResult.signalMetricLabel para o que ele significa nesta estrategia. */
+  signalMetricValue: number;
 }
 
 export interface ClassicStrategyResult {
@@ -160,4 +162,8 @@ export interface ClassicStrategyResult {
   strategy: ClassicStrategyConfig;
   occurrences: ClassicOccurrence[];
   summary: { wins: number; losses: number; dojis: number };
+  /** O que signalMetricValue mede nesta estrategia (ex.: "Pavio da vela de sinal", "Corpo atual vs. anterior"). */
+  signalMetricLabel: string;
+  /** Media de signalMetricValue entre todas as ocorrencias — de olho nisso pra saber se as entradas tem sido "seguras" ou fracas. */
+  avgSignalMetricValue: number;
 }

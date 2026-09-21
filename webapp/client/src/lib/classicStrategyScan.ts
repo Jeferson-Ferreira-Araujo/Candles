@@ -1,4 +1,4 @@
-import type { AssetInfo, ClassicStrategyConfig } from '@polarium12c/shared';
+import type { AssetInfo, ClassicStrategyId } from '@polarium12c/shared';
 import { api } from '../api.js';
 import type { ClassicScanRow, ClassicScanState } from '../components/ClassicStrategyResults.js';
 
@@ -9,7 +9,7 @@ const SCAN_CONCURRENCY = 6;
 export async function runClassicStrategyScan(
   allAssets: AssetInfo[],
   days: number,
-  strategy: ClassicStrategyConfig,
+  strategyId: ClassicStrategyId,
   onProgress: (state: Extract<ClassicScanState, { status: 'loading' }>) => void
 ): Promise<Extract<ClassicScanState, { status: 'done' }>> {
   const startedAt = Date.now();
@@ -25,7 +25,7 @@ export async function runClassicStrategyScan(
     while (nextIndex < allAssets.length) {
       const asset = allAssets[nextIndex++]!;
       try {
-        const result = await api.runClassicStrategy(asset.id, days, strategy);
+        const result = await api.runClassicStrategy(asset.id, days, strategyId);
         rows.push({ activeId: asset.id, assetName: asset.name, result });
         overall.wins += result.summary.wins;
         overall.losses += result.summary.losses;

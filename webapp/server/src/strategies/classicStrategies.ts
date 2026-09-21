@@ -27,7 +27,18 @@ interface RawSignal {
   entryIndex: number;
   direction: Direction;
   setupWindow: Candle[];
+  /** Percentual (ou razao expressa como percentual) que mede a "forca" da vela de sinal desta ocorrencia. */
+  signalMetricValue: number;
 }
+
+/** Rotulo do metric de forca do sinal, um por estrategia (constante ao longo de toda a execucao). */
+const SIGNAL_METRIC_LABEL: Record<ClassicStrategyConfig['id'], string> = {
+  sequence_reversal: 'Corpo da vela de reversão',
+  engulfing: 'Corpo atual vs. anterior',
+  pin_bar: 'Pavio da vela de sinal',
+  impulse_pullback: 'Retração do pullback',
+  compression_breakout: 'Corpo do rompimento',
+};
 
 function bodySize(c: Candle): number {
   return Math.abs(c.close - c.open);
@@ -72,7 +83,7 @@ function detectSequenceReversal(candles: Candle[], p: Extract<ClassicStrategyCon
     const oppositeWick = direction === 'CALL' ? upperWickPercentage(reversal) : lowerWickPercentage(reversal);
     if (oppositeWick === null || oppositeWick > p.maxReversalOppositeWickPercent) continue;
 
-    out.push({ entryIndex: i + 1, direction, setupWindow: [...seq, reversal] });
+    out.push({ entryIndex: i + 1, direction, setupWindow: [...seq, reversal], signalMetricValue: body });
   }
   return out;
 }
@@ -98,12 +109,14 @@ function detectEngulfing(candles: Candle[], p: Extract<ClassicStrategyConfig, { 
 
     const prevBody = bodySize(prev);
     const currBody = bodySize(curr);
-    if (prevBody === 0 || currBody / prevBody < p.minBodyRatio) continue;
+    if (prevBody === 0) continue;
+    const ratio = currBody / prevBody;
+    if (ratio < p.minBodyRatio) continue;
 
     const oppositeWick = direction === 'CALL' ? upperWickPercentage(curr) : lowerWickPercentage(curr);
     if (oppositeWick === null || oppositeWick > p.maxOppositeWickPercent) continue;
 
-    out.push({ entryIndex: i + 1, direction, setupWindow: [prev, curr] });
+    out.push({ entryIndex: i + 1, direction, setupWindow: [prev, curr], signalMetricValue: ratio });
   }
   return out;
 }
@@ -124,11 +137,17 @@ function detectPinBar(candles: Candle[], p: Extract<ClassicStrategyConfig, { id:
     const closePosition = (c.close - c.low) / range; // 0 = fechou na minima, 1 = fechou na maxima
 
     let direction: Direction | null = null;
-    if (lower >= p.minWickPercent && closePosition >= p.minClosePositionPercent) direction = 'CALL';
-    else if (upper >= p.minWickPercent && 1 - closePosition >= p.minClosePositionPercent) direction = 'PUT';
+    let wick = 0;
+    if (lower >= p.minWickPercent && closePosition >= p.minClosePositionPercent) {
+      direction = 'CALL';
+      wick = lower;
+    } else if (upper >= p.minWickPercent && 1 - closePosition >= p.minClosePositionPercent) {
+      direction = 'PUT';
+      wick = upper;
+    }
     if (!direction || !passesDirectionFilter(direction, p.direction)) continue;
 
-    out.push({ entryIndex: i + 1, direction, setupWindow: [c] });
+    out.push({ entryIndex: i + 1, direction, setupWindow: [c], signalMetricValue: wick });
   }
   return out;
 }
@@ -157,7 +176,7 @@ function detectImpulsePullback(candles: Candle[], p: Extract<ClassicStrategyConf
     const direction: Direction = impulseColor === 'G' ? 'CALL' : 'PUT';
     if (!passesDirectionFilter(direction, p.direction)) continue;
 
-    out.push({ entryIndex: i + 2, direction, setupWindow: [impulse, pullback] });
+    out.push({ entryIndex: i + 2, direction, setupWindow: [impulse, pullback], signalMetricValue: retrace });
   }
   return out;
 }
@@ -189,7 +208,8 @@ function detectCompressionBreakout(
     else if (breakoutColor === 'R' && breakout.close < blockLow) direction = 'PUT';
     if (!direction || !passesDirectionFilter(direction, p.direction)) continue;
 
-    out.push({ entryIndex: i + L + 1, direction, setupWindow: [...block, breakout] });
+    const breakoutBody = bodyPercentage(breakout) ?? 0;
+    out.push({ entryIndex: i + L + 1, direction, setupWindow: [...block, breakout], signalMetricValue: breakoutBody });
   }
   return out;
 }
@@ -234,17 +254,28 @@ export async function runClassicStrategy(
       direction: s.direction,
       entryCandle,
       result: entryCandle ? computeResultForDirection(entryCandle, s.direction) : undefined,
+      signalMetricValue: s.signalMetricValue,
     };
   });
 
   let wins = 0;
   let losses = 0;
   let dojis = 0;
+  let metricSum = 0;
   for (const o of occurrences) {
     if (o.result === 'WIN') wins++;
     else if (o.result === 'LOSS') losses++;
     else if (o.result === 'DOJI') dojis++;
+    metricSum += o.signalMetricValue;
   }
 
-  return { activeId, days, strategy, occurrences, summary: { wins, losses, dojis } };
+  return {
+    activeId,
+    days,
+    strategy,
+    occurrences,
+    summary: { wins, losses, dojis },
+    signalMetricLabel: SIGNAL_METRIC_LABEL[strategy.id],
+    avgSignalMetricValue: occurrences.length > 0 ? metricSum / occurrences.length : 0,
+  };
 }

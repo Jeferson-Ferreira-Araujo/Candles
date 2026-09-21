@@ -40,7 +40,7 @@ function formatDuration(ms: number): string {
 }
 
 /** Uma ocorrencia: as velas do setup (bolinhas coloridas) + a vela de entrada + o resultado real. */
-function OccurrenceRow({ occurrence }: { occurrence: ClassicOccurrence }) {
+function OccurrenceRow({ occurrence, signalMetricLabel }: { occurrence: ClassicOccurrence; signalMetricLabel: string }) {
   const when = new Date(occurrence.occurredAt * 1000).toLocaleString('pt-BR', {
     day: '2-digit',
     month: '2-digit',
@@ -73,6 +73,9 @@ function OccurrenceRow({ occurrence }: { occurrence: ClassicOccurrence }) {
         occurrence.direction === 'CALL' ? 'bg-sky-800 text-sky-100' : 'bg-fuchsia-800 text-fuchsia-100'
       }`}>
         {occurrence.direction}
+      </span>
+      <span className="text-slate-500" title={signalMetricLabel}>
+        {(occurrence.signalMetricValue * 100).toFixed(0)}%
       </span>
       <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${RESULT_STYLE[occurrence.result ?? ''] ?? 'bg-slate-800 text-slate-400'}`}>
         {occurrence.result ?? 'sem dado'}
@@ -133,6 +136,7 @@ export function ClassicStrategyResults({ state }: Props) {
 
   const { rows, overall, failedCount, elapsedMs, days } = state;
   const overallRate = winRate(overall);
+  const signalMetricLabel = rows[0]?.result.signalMetricLabel ?? 'Força do sinal';
   const ranked = [...rows]
     .filter((r) => r.result.occurrences.length > 0)
     .sort((a, b) => {
@@ -147,7 +151,10 @@ export function ClassicStrategyResults({ state }: Props) {
         <div className="font-semibold text-sky-200">
           Resultado — últimos {days} dias ({rows.length} ativo(s) testado(s), em {formatDuration(elapsedMs)})
         </div>
-        <p className="text-xs text-slate-400 mt-0.5">Consolidado — não é garantia futura.</p>
+        <p className="text-xs text-slate-400 mt-0.5">
+          Consolidado — não é garantia futura. "{signalMetricLabel}" mede a força da vela de sinal de cada ocorrência —
+          quanto maior, mais segura a entrada tende a ser.
+        </p>
         {failedCount > 0 && (
           <p className="text-xs text-amber-400 mt-0.5">{failedCount} ativo(s) falharam ao consultar e foram ignorados.</p>
         )}
@@ -198,6 +205,9 @@ export function ClassicStrategyResults({ state }: Props) {
                       <span className="text-emerald-400">{t.wins}W</span>
                       <span className="text-rose-400">{t.losses}L</span>
                       {t.dojis > 0 && <span className="text-slate-400">{t.dojis}D</span>}
+                      <span className="text-slate-500" title={`${signalMetricLabel} (média)`}>
+                        {(row.result.avgSignalMetricValue * 100).toFixed(0)}%
+                      </span>
                       <span className="font-semibold text-white w-14 text-right">{formatPct(rate)}</span>
                       <span className="text-slate-500">{isExpanded ? '▲' : '▼'}</span>
                     </span>
@@ -205,7 +215,7 @@ export function ClassicStrategyResults({ state }: Props) {
                   {isExpanded && (
                     <div className="border-t border-slate-800 px-3 py-2 space-y-2">
                       {row.result.occurrences.map((occ) => (
-                        <OccurrenceRow key={occ.id} occurrence={occ} />
+                        <OccurrenceRow key={occ.id} occurrence={occ} signalMetricLabel={signalMetricLabel} />
                       ))}
                     </div>
                   )}

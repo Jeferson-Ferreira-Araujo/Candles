@@ -1,7 +1,7 @@
 import type {
   AssetInfo,
   BacktestSummary,
-  ClassicStrategyConfig,
+  ClassicStrategyId,
   ClassicStrategyResult,
   CustomPattern,
   DailyResult,
@@ -114,11 +114,11 @@ export const api = {
       body: JSON.stringify({ activeId, days }),
     }).then((r) => json<PatternDiscoveryResult>(r)),
 
-  runClassicStrategy: (activeId: number, days: number, strategy: ClassicStrategyConfig) =>
+  runClassicStrategy: (activeId: number, days: number, strategyId: ClassicStrategyId) =>
     req('/api/classic-strategy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activeId, days, strategy }),
+      body: JSON.stringify({ activeId, days, strategyId }),
     }).then((r) => json<ClassicStrategyResult>(r)),
 
   getEvents: (limit = 200) => req(`/api/events?limit=${limit}`).then((r) => json<import('@polarium12c/shared').AppEvent[]>(r)),
