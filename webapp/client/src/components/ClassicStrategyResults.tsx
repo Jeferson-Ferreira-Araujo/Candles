@@ -8,11 +8,29 @@ export interface ClassicScanRow {
   result: ClassicStrategyResult;
 }
 
+type Tally = { wins: number; losses: number; dojis: number };
+
 export type ClassicScanState =
   | { status: 'idle' }
   | { status: 'loading'; completed: number; total: number; currentAssetName: string | null; elapsedMs: number; days: number }
   | { status: 'empty' }
-  | { status: 'done'; rows: ClassicScanRow[]; overall: { wins: number; losses: number; dojis: number }; failedCount: number; elapsedMs: number; days: number }
+  | {
+      status: 'done';
+      rows: ClassicScanRow[];
+      overall: Tally;
+      /** Gale 1 (sempre calculado) — "mesma direcao"/"oposta" sao relativas a direcao PROPRIA de cada ocorrencia, ja que estrategias classicas nao tem uma unica direcao fixa por execucao. */
+      reentry: {
+        combinedSameDirection: Tally;
+        combinedOppositeDirection: Tally;
+        reentryOnlySameDirection: Tally;
+        reentryOnlyOppositeDirection: Tally;
+        consideredLosses: number;
+        missingReentryCandle: number;
+      };
+      failedCount: number;
+      elapsedMs: number;
+      days: number;
+    }
   | { status: 'error'; message: string };
 
 const RESULT_STYLE: Record<string, string> = {
@@ -134,7 +152,7 @@ export function ClassicStrategyResults({ state }: Props) {
     );
   }
 
-  const { rows, overall, failedCount, elapsedMs, days } = state;
+  const { rows, overall, reentry, failedCount, elapsedMs, days } = state;
   const overallRate = winRate(overall);
   const signalMetricLabel = rows[0]?.result.signalMetricLabel ?? 'Força do sinal';
   const ranked = [...rows]
@@ -225,6 +243,70 @@ export function ClassicStrategyResults({ state }: Props) {
           </div>
         </div>
       )}
+
+      <div className="border-t border-sky-900 pt-4">
+        <div className="text-xs text-slate-500 mb-2">
+          Resultado final combinado com Gale 1 — se a 1ª entrada perder, reentra na vela seguinte (
+          {reentry.consideredLosses} LOSS consideradas
+          {reentry.missingReentryCandle > 0 && `, ${reentry.missingReentryCandle} sem vela seguinte disponível e ignoradas`}
+          ).{' '}
+          <span className="text-amber-400">Mistura wins diretos da 1ª entrada com a reentrada — ver abaixo a taxa isolada.</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500 mb-1">Gale mesma direção da ocorrência</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.combinedSameDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.combinedSameDirection.losses}L</span>
+              {reentry.combinedSameDirection.dojis > 0 && <span className="text-slate-400">{reentry.combinedSameDirection.dojis}D</span>}
+              <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.combinedSameDirection))}</span>
+            </div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
+            <div className="text-xs text-slate-500 mb-1">Gale direção contrária à ocorrência</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.combinedOppositeDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.combinedOppositeDirection.losses}L</span>
+              {reentry.combinedOppositeDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.combinedOppositeDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.combinedOppositeDirection))}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-sky-900 pt-4">
+        <div className="text-xs text-slate-500 mb-2">
+          Taxa real da reentrada isolada — só entre as {reentry.consideredLosses} vezes que a 1ª entrada perdeu, sem
+          contar os wins diretos junto.{' '}
+          <span className="text-emerald-400">Esse é o número que responde "se eu sempre reentrar, qual minha chance real".</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg bg-slate-950/60 border border-emerald-900 p-3">
+            <div className="text-xs text-slate-500 mb-1">Reentrada mesma direção da ocorrência</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.reentryOnlySameDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.reentryOnlySameDirection.losses}L</span>
+              {reentry.reentryOnlySameDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.reentryOnlySameDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.reentryOnlySameDirection))}</span>
+            </div>
+          </div>
+          <div className="rounded-lg bg-slate-950/60 border border-emerald-900 p-3">
+            <div className="text-xs text-slate-500 mb-1">Reentrada direção contrária à ocorrência</div>
+            <div className="flex items-center gap-3">
+              <span className="text-emerald-400">{reentry.reentryOnlyOppositeDirection.wins}W</span>
+              <span className="text-rose-400">{reentry.reentryOnlyOppositeDirection.losses}L</span>
+              {reentry.reentryOnlyOppositeDirection.dojis > 0 && (
+                <span className="text-slate-400">{reentry.reentryOnlyOppositeDirection.dojis}D</span>
+              )}
+              <span className="font-semibold text-white ml-auto">{formatPct(winRate(reentry.reentryOnlyOppositeDirection))}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

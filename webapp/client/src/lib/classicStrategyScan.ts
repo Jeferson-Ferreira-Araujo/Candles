@@ -6,6 +6,12 @@ import type { ClassicScanRow, ClassicScanState } from '../components/ClassicStra
 // cada ativo e uma chamada de rede real (busca de candles M1 + varredura da estrategia).
 const SCAN_CONCURRENCY = 6;
 
+function addTally(into: { wins: number; losses: number; dojis: number }, from: { wins: number; losses: number; dojis: number }): void {
+  into.wins += from.wins;
+  into.losses += from.losses;
+  into.dojis += from.dojis;
+}
+
 export async function runClassicStrategyScan(
   allAssets: AssetInfo[],
   days: number,
@@ -17,6 +23,14 @@ export async function runClassicStrategyScan(
 
   const rows: ClassicScanRow[] = [];
   const overall = { wins: 0, losses: 0, dojis: 0 };
+  const reentry = {
+    combinedSameDirection: { wins: 0, losses: 0, dojis: 0 },
+    combinedOppositeDirection: { wins: 0, losses: 0, dojis: 0 },
+    reentryOnlySameDirection: { wins: 0, losses: 0, dojis: 0 },
+    reentryOnlyOppositeDirection: { wins: 0, losses: 0, dojis: 0 },
+    consideredLosses: 0,
+    missingReentryCandle: 0,
+  };
   let failedCount = 0;
   let completed = 0;
 
@@ -30,6 +44,13 @@ export async function runClassicStrategyScan(
         overall.wins += result.summary.wins;
         overall.losses += result.summary.losses;
         overall.dojis += result.summary.dojis;
+
+        addTally(reentry.combinedSameDirection, result.reentry.combinedSameDirection);
+        addTally(reentry.combinedOppositeDirection, result.reentry.combinedOppositeDirection);
+        addTally(reentry.reentryOnlySameDirection, result.reentry.reentryOnlySameDirection);
+        addTally(reentry.reentryOnlyOppositeDirection, result.reentry.reentryOnlyOppositeDirection);
+        reentry.consideredLosses += result.reentry.consideredLosses;
+        reentry.missingReentryCandle += result.reentry.missingReentryCandle;
       } catch {
         failedCount++;
       }
@@ -41,5 +62,5 @@ export async function runClassicStrategyScan(
   const workerCount = Math.min(SCAN_CONCURRENCY, allAssets.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  return { status: 'done', rows, overall, failedCount, elapsedMs: Date.now() - startedAt, days };
+  return { status: 'done', rows, overall, reentry, failedCount, elapsedMs: Date.now() - startedAt, days };
 }

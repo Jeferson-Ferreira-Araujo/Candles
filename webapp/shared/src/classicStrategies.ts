@@ -204,6 +204,8 @@ export interface ClassicOccurrence {
   direction: Direction;
   entryCandle?: Candle; // vela seguinte ao setup — pode faltar se for o ultimo candle do periodo
   result?: TradeResult;
+  /** Candle seguinte a entryCandle — usado so para simular o Gale 1, nunca para o resultado principal. */
+  reentryCandle?: Candle;
   /** Percentual (ou razao expressa como percentual) que mede a forca da vela de sinal desta ocorrencia especifica — ver ClassicStrategyResult.signalMetricLabel para o que ele significa nesta estrategia. */
   signalMetricValue: number;
 }
@@ -218,4 +220,19 @@ export interface ClassicStrategyResult {
   signalMetricLabel: string;
   /** Media de signalMetricValue entre todas as ocorrencias — de olho nisso pra saber se as entradas tem sido "seguras" ou fracas. */
   avgSignalMetricValue: number;
+  /**
+   * Gale 1 (sempre calculado, nao depende de nenhum toggle) — mesma logica/limitacoes do
+   * Gale 1 do padrao customizado (ver BacktestSummary.reentry): combined* MISTURA os wins
+   * diretos da 1a entrada com a reentrada (sempre parece melhor do que a reentrada sozinha
+   * realmente e); reentryOnly* isola SO quem perdeu a 1a entrada — esse e o numero real de
+   * "se eu sempre reentrar depois de perder, qual minha chance real".
+   */
+  reentry: {
+    combinedSameDirection: { wins: number; losses: number; dojis: number }; // 1a entrada, e se perder, gale repetindo a direcao original de cada ocorrencia
+    combinedOppositeDirection: { wins: number; losses: number; dojis: number }; // idem, mas gale invertendo a direcao
+    reentryOnlySameDirection: { wins: number; losses: number; dojis: number };
+    reentryOnlyOppositeDirection: { wins: number; losses: number; dojis: number };
+    consideredLosses: number; // quantas ocorrencias perderam a 1a entrada
+    missingReentryCandle: number; // dessas, quantas nao tinham candle seguinte disponivel (fim do periodo)
+  };
 }

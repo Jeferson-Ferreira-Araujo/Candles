@@ -10,9 +10,10 @@ import {
   type ClassicStrategyConfig,
   type ClassicStrategyResult,
   type Direction,
+  type TradeResult,
 } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
-import { computeResultForDirection } from '../util/tradeResult.js';
+import { computeResultForDirection, oppositeDirection } from '../util/tradeResult.js';
 
 /**
  * Motores de deteccao das 5 familias de estrategias classicas (ver shared/src/classicStrategies.ts
@@ -466,6 +467,7 @@ export async function runClassicStrategy(
   const occurrences: ClassicOccurrence[] = rawSignals.map((s) => {
     const setupLast = s.setupWindow[s.setupWindow.length - 1]!;
     const entryCandle = candles[s.entryIndex];
+    const reentryCandle = candles[s.entryIndex + 1];
     return {
       id: `classic-${strategy.id}-${activeId}-${setupLast.to}-${randomUUID()}`,
       activeId,
@@ -474,6 +476,7 @@ export async function runClassicStrategy(
       direction: s.direction,
       entryCandle,
       result: entryCandle ? computeResultForDirection(entryCandle, s.direction) : undefined,
+      reentryCandle,
       signalMetricValue: s.signalMetricValue,
     };
   });
@@ -497,5 +500,64 @@ export async function runClassicStrategy(
     summary: { wins, losses, dojis },
     signalMetricLabel: SIGNAL_METRIC_LABEL[strategy.id],
     avgSignalMetricValue: occurrences.length > 0 ? metricSum / occurrences.length : 0,
+    reentry: buildReentrySummary(occurrences),
+  };
+}
+
+/**
+ * Gale 1 (mesma logica do padrao customizado, ver backtestRunner.ts): WIN direto se a 1a
+ * entrada ja ganhou; se perdeu, o resultado passa a ser o da reentrada no candle seguinte,
+ * simulada nas duas direcoes possiveis. Aqui cada ocorrencia tem sua PROPRIA direcao (nao uma
+ * unica direcao fixa para toda a corrida), entao "mesma direcao"/"oposta" sao relativas a
+ * direcao daquela ocorrencia especifica.
+ */
+function buildReentrySummary(occurrences: ClassicOccurrence[]): ClassicStrategyResult['reentry'] {
+  const tally = (results: TradeResult[]) => {
+    let wins = 0;
+    let losses = 0;
+    let dojis = 0;
+    for (const r of results) {
+      if (r === 'WIN') wins++;
+      else if (r === 'LOSS') losses++;
+      else dojis++;
+    }
+    return { wins, losses, dojis };
+  };
+
+  const combinedSame: TradeResult[] = [];
+  const combinedOpposite: TradeResult[] = [];
+  const reentryOnlySame: TradeResult[] = [];
+  const reentryOnlyOpposite: TradeResult[] = [];
+  let consideredLosses = 0;
+  let missingReentryCandle = 0;
+
+  for (const o of occurrences) {
+    if (o.result === undefined) continue;
+    if (o.result !== 'LOSS') {
+      combinedSame.push(o.result);
+      combinedOpposite.push(o.result);
+      continue;
+    }
+    consideredLosses++;
+    if (!o.reentryCandle) {
+      missingReentryCandle++;
+      continue;
+    }
+    const opposite = oppositeDirection(o.direction);
+    const sameResult = computeResultForDirection(o.reentryCandle, o.direction);
+    const oppositeResult = computeResultForDirection(o.reentryCandle, opposite);
+    combinedSame.push(sameResult);
+    combinedOpposite.push(oppositeResult);
+    reentryOnlySame.push(sameResult);
+    reentryOnlyOpposite.push(oppositeResult);
+  }
+
+  return {
+    combinedSameDirection: tally(combinedSame),
+    combinedOppositeDirection: tally(combinedOpposite),
+    reentryOnlySameDirection: tally(reentryOnlySame),
+    reentryOnlyOppositeDirection: tally(reentryOnlyOpposite),
+    consideredLosses,
+    missingReentryCandle,
   };
 }

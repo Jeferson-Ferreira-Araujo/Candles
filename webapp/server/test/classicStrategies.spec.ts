@@ -72,6 +72,46 @@ describe('runClassicStrategy — sequence_reversal', () => {
     expect(result.occurrences).toHaveLength(0);
   });
 
+  it('Gale 1: WIN da 1a entrada passa direto, LOSS usa o resultado da reentrada (candle seguinte)', async () => {
+    const params = { ...DEFAULT_SEQUENCE_REVERSAL_PARAMS, sequenceLength: 4 };
+    let from = BASE;
+    const candles: Candle[] = [];
+    // Ocorrencia 1: sequencia R,R,R,R -> reversao G (CALL) -> entrada G -> WIN direto.
+    for (let i = 0; i < 4; i++) {
+      candles.push(solid(from, 'R'));
+      from += SIZE;
+    }
+    candles.push(solid(from, 'G'));
+    from += SIZE;
+    candles.push(solid(from, 'G'));
+    from += SIZE;
+    // Ocorrencia 2: sequencia R,R,R,R -> reversao G (CALL) -> entrada R -> LOSS.
+    for (let i = 0; i < 4; i++) {
+      candles.push(solid(from, 'R'));
+      from += SIZE;
+    }
+    candles.push(solid(from, 'G'));
+    from += SIZE;
+    candles.push(solid(from, 'R'));
+    from += SIZE;
+    candles.push(solid(from, 'G')); // reentrada controlada: fecha em alta
+
+    const result = await run(candles, { id: 'sequence_reversal', params });
+    expect(result.occurrences).toHaveLength(2);
+    expect(result.occurrences[0]!.result).toBe('WIN');
+    expect(result.occurrences[1]!.result).toBe('LOSS');
+
+    expect(result.reentry.consideredLosses).toBe(1);
+    expect(result.reentry.missingReentryCandle).toBe(0);
+    // Combinado mesma direcao (CALL): WIN direto (occ1) + reentrada CALL da occ2 (fecha em alta -> WIN) = 2 wins.
+    expect(result.reentry.combinedSameDirection).toEqual({ wins: 2, losses: 0, dojis: 0 });
+    // Combinado direcao oposta (PUT): WIN direto (occ1) passa igual + reentrada PUT da occ2 (fecha em alta -> LOSS).
+    expect(result.reentry.combinedOppositeDirection).toEqual({ wins: 1, losses: 1, dojis: 0 });
+    // Isolado (SO a occ2, sem misturar o win direto da occ1).
+    expect(result.reentry.reentryOnlySameDirection).toEqual({ wins: 1, losses: 0, dojis: 0 });
+    expect(result.reentry.reentryOnlyOppositeDirection).toEqual({ wins: 0, losses: 1, dojis: 0 });
+  });
+
   it('respeita o filtro de direcao (CALL_ONLY ignora reversoes PUT)', async () => {
     const params = { ...DEFAULT_SEQUENCE_REVERSAL_PARAMS, sequenceLength: 2, direction: 'CALL_ONLY' as const };
     let from = BASE;
