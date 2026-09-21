@@ -70,6 +70,20 @@ CREATE TABLE IF NOT EXISTS settings (
   value_json JSONB NOT NULL
 );
 
+-- Padroes de candles definidos pelo usuario na tela de edicao de padrao, substituindo a
+-- antiga regra fixa no codigo. candles_json guarda todas as casas preenchidas (CandleColor[]),
+-- da mais antiga para a mais nova — a ultima e a vela de entrada, cuja cor define a direcao.
+CREATE TABLE IF NOT EXISTS custom_patterns (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  candles_json JSONB NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at BIGINT NOT NULL
+);
+
+-- Garante no maximo 1 padrao ativo por vez (o monitor ao vivo sempre usa um so).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_patterns_single_active ON custom_patterns (is_active) WHERE is_active = TRUE;
+
 CREATE TABLE IF NOT EXISTS daily_results (
   date TEXT PRIMARY KEY, -- YYYY-MM-DD UTC
   wins INTEGER NOT NULL DEFAULT 0,

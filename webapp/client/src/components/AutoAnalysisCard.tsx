@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { AssetInfo, Direction, PatternOccurrence } from '@polarium12c/shared';
-import { ENTRY_DIRECTION, candleColor } from '@polarium12c/shared';
+import { candleColor } from '@polarium12c/shared';
 
-const OPPOSITE_DIRECTION: Direction = (ENTRY_DIRECTION as Direction) === 'PUT' ? 'CALL' : 'PUT';
+function oppositeOf(direction: Direction): Direction {
+  return direction === 'PUT' ? 'CALL' : 'PUT';
+}
 
 const RESULT_STYLE: Record<string, string> = {
   WIN: 'bg-emerald-700 text-emerald-100',
@@ -30,9 +32,11 @@ export type AutoAnalysisState =
       failedCount: number;
       elapsedMs: number;
       days: number;
+      /** Direcao de entrada do padrao usado nesta execucao (derivada da cor da ultima casa do padrao). */
+      entryDirection: Direction;
       /** Sempre presente (Gale 1 e calculado em toda execucao, sem depender de nenhuma configuracao). */
       reentry: {
-        combinedSameDirection: AssetTally; // resultado final: 1a entrada (ENTRY_DIRECTION), e se perder, gale repetindo a mesma direcao
+        combinedSameDirection: AssetTally; // resultado final: 1a entrada (entryDirection), e se perder, gale repetindo a mesma direcao
         combinedOppositeDirection: AssetTally; // idem, mas gale invertendo para a direcao contraria
         consideredLosses: number;
         missingCandle14: number;
@@ -157,7 +161,8 @@ export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCa
     );
   }
 
-  const { overall, perAsset, occurrencesByAsset, assets, failedCount, elapsedMs, days, reentry } = state;
+  const { overall, perAsset, occurrencesByAsset, assets, failedCount, elapsedMs, days, reentry, entryDirection } = state;
+  const oppositeDirection = oppositeOf(entryDirection);
   const nameOf = (id: number) => assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   const overallRate = winRate(overall);
 
@@ -278,7 +283,7 @@ export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCa
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-            <div className="text-xs text-slate-500 mb-1">Gale mesma direção ({ENTRY_DIRECTION})</div>
+            <div className="text-xs text-slate-500 mb-1">Gale mesma direção ({entryDirection})</div>
             <div className="flex items-center gap-3">
               <span className="text-emerald-400">{reentry.combinedSameDirection.wins}W</span>
               <span className="text-rose-400">{reentry.combinedSameDirection.losses}L</span>
@@ -289,7 +294,7 @@ export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCa
             </div>
           </div>
           <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-            <div className="text-xs text-slate-500 mb-1">Gale direção contrária ({OPPOSITE_DIRECTION})</div>
+            <div className="text-xs text-slate-500 mb-1">Gale direção contrária ({oppositeDirection})</div>
             <div className="flex items-center gap-3">
               <span className="text-emerald-400">{reentry.combinedOppositeDirection.wins}W</span>
               <span className="text-rose-400">{reentry.combinedOppositeDirection.losses}L</span>

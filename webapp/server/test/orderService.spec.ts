@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import type { AppEvent, Candle, CandleColor, Settings } from '@polarium12c/shared';
-import { DEFAULT_SETTINGS, TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import type { AppEvent, Candle, CandleColor, Direction, Settings } from '@polarium12c/shared';
+import { DEFAULT_SETTINGS } from '@polarium12c/shared';
 import { getTestDb, resetDb } from './helpers/testDb.js';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
 import { OrderService } from '../src/orders/OrderService.js';
@@ -8,6 +8,10 @@ import { getDailyResult, getSignal, listEvents } from '../src/db/repositories.js
 
 const SIZE = 60;
 const ACTIVE = 81;
+const DIRECTION: Direction = 'PUT';
+
+/** Padrao de teste (prefixo de confirmacao). */
+const CONFIRM_PATTERN: CandleColor[] = ['G', 'R', 'G', 'R', 'R', 'G', 'R', 'R'];
 
 function green(from: number): Candle {
   return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 1, close: 2, high: 2, low: 1, isClosed: true };
@@ -15,16 +19,11 @@ function green(from: number): Candle {
 function red(from: number): Candle {
   return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 2, close: 1, high: 2, low: 1, isClosed: true };
 }
-function redWithWick(from: number, wick: number): Candle {
-  return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 100, close: wick * 100, high: 100, low: 0, isClosed: true };
-}
 
-// redWithWick(i===10) fica sem uso quando a regra atual e curta demais para alcancar essa
-// posicao (WICK_RULE_APPLIES=false) — inofensivo, so nunca e chamada.
 function buildWindow(baseFrom: number): Candle[] {
-  return TWELVE_CANDLES_PATTERN.map((color: CandleColor, i: number) => {
+  return CONFIRM_PATTERN.map((color: CandleColor, i: number) => {
     const from = baseFrom + i * SIZE;
-    return i === 10 ? redWithWick(from, 0.5) : color === 'G' ? green(from) : red(from);
+    return color === 'G' ? green(from) : red(from);
   });
 }
 
@@ -60,7 +59,7 @@ describe('OrderService', () => {
     const window = buildWindow(1_800_000_000);
     for (const c of window) broker.pushLiveCandle(ACTIVE, c);
 
-    await service.handleConfirmed(ACTIVE, window, 0.5);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
 
     const lastCandle = window[window.length - 1]!;
     const signalId = `12CANDLES-${ACTIVE}-${lastCandle.to}-PUT`;
@@ -86,7 +85,7 @@ describe('OrderService', () => {
     const window = buildWindow(1_800_010_000);
     for (const c of window) broker.pushLiveCandle(ACTIVE, c);
 
-    await service.handleConfirmed(ACTIVE, window, 0.5);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
 
     const signalId = `12CANDLES-${ACTIVE}-${window[window.length - 1]!.to}-PUT`;
     expect((await getSignal(db, signalId))?.status).toBe('BLOCKED');
@@ -100,7 +99,7 @@ describe('OrderService', () => {
     const window = buildWindow(1_800_020_000);
     for (const c of window) broker.pushLiveCandle(ACTIVE, c);
 
-    await service.handleConfirmed(ACTIVE, window, 0.5);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
 
     const signalId = `12CANDLES-${ACTIVE}-${window[window.length - 1]!.to}-PUT`;
     expect((await getSignal(db, signalId))?.status).toBe('BLOCKED');
@@ -111,8 +110,8 @@ describe('OrderService', () => {
     const window = buildWindow(1_800_030_000);
     for (const c of window) broker.pushLiveCandle(ACTIVE, c);
 
-    await service.handleConfirmed(ACTIVE, window, 0.5);
-    await service.handleConfirmed(ACTIVE, window, 0.5); // repete o mesmo sinal
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION); // repete o mesmo sinal
 
     const { rows } = await db.query('SELECT COUNT(*) as n FROM orders');
     expect(Number(rows[0].n)).toBe(1);
@@ -122,12 +121,12 @@ describe('OrderService', () => {
     const { db, broker, service } = await setup();
     const window1 = buildWindow(1_800_040_000);
     for (const c of window1) broker.pushLiveCandle(ACTIVE, c);
-    await service.handleConfirmed(ACTIVE, window1, 0.5);
+    await service.handleConfirmed(ACTIVE, window1, 0.5, DIRECTION);
 
     // Segundo "sinal" no MESMO ativo antes da primeira ordem resolver.
     const window2 = buildWindow(1_800_050_000);
     for (const c of window2) broker.pushLiveCandle(ACTIVE, c);
-    await service.handleConfirmed(ACTIVE, window2, 0.5);
+    await service.handleConfirmed(ACTIVE, window2, 0.5, DIRECTION);
 
     const signalId2 = `12CANDLES-${ACTIVE}-${window2[window2.length - 1]!.to}-PUT`;
     expect((await getSignal(db, signalId2))?.status).toBe('BLOCKED');
@@ -140,7 +139,7 @@ describe('OrderService', () => {
     const { db, broker, service, setSettings } = await setup({ stopLossDaily: 3 });
     const window = buildWindow(1_800_060_000);
     for (const c of window) broker.pushLiveCandle(ACTIVE, c);
-    await service.handleConfirmed(ACTIVE, window, 0.5);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
 
     // Resolve como LOSS para PUT (vela de entrada fecha ACIMA da abertura).
     broker.pushLiveCandle(ACTIVE, green(window[window.length - 1]!.to));
@@ -159,7 +158,7 @@ describe('OrderService', () => {
     const OTHER_ACTIVE = 76;
     const window2Other = window2.map((c) => ({ ...c, activeId: OTHER_ACTIVE }));
     for (const c of window2Other) broker.pushLiveCandle(OTHER_ACTIVE, c);
-    await service.handleConfirmed(OTHER_ACTIVE, window2Other, 0.5);
+    await service.handleConfirmed(OTHER_ACTIVE, window2Other, 0.5, DIRECTION);
 
     const signalId2 = `12CANDLES-${OTHER_ACTIVE}-${window2Other[window2Other.length - 1]!.to}-PUT`;
     expect((await getSignal(db, signalId2))?.status).toBe('BLOCKED');

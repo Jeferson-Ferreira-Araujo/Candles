@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Db } from '../db/db.js';
-import { ENTRY_DIRECTION, type AppEvent, type Candle, type Settings } from '@polarium12c/shared';
+import type { AppEvent, Candle, Direction, Settings } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { evaluateSafety, type SafetyContext } from './SafetyGate.js';
 import {
@@ -59,18 +59,18 @@ export class OrderService extends EventEmitter {
   }
 
   /** Deve ser chamado quando o LiveMonitorService emitir um evento PATTERN_CONFIRMED. */
-  async handleConfirmed(activeId: number, window: Candle[], wickPercentage11: number): Promise<void> {
-    const lastPatternCandle = window[window.length - 1]; // hoje a 13a vela do padrao (sempre G)
+  async handleConfirmed(activeId: number, window: Candle[], wickPercentage11: number, direction: Direction): Promise<void> {
+    const lastPatternCandle = window[window.length - 1]; // ultima vela do prefixo do padrao ativo
     if (!lastPatternCandle) return;
 
-    const signalId = `12CANDLES-${activeId}-${lastPatternCandle.to}-${ENTRY_DIRECTION}`;
+    const signalId = `12CANDLES-${activeId}-${lastPatternCandle.to}-${direction}`;
 
     if (await getSignal(this.db, signalId)) return; // ja processado — idempotente por design
 
     await saveSignal(this.db, {
       id: signalId,
       activeId,
-      direction: ENTRY_DIRECTION,
+      direction,
       createdAt: Date.now(),
       candles: window,
       wickPercentage11,
@@ -92,7 +92,7 @@ export class OrderService extends EventEmitter {
       id: orderId,
       signalId,
       activeId,
-      direction: ENTRY_DIRECTION,
+      direction,
       amount: settings.entryAmount,
       status: 'REQUESTED',
       requestedAt: Date.now(),
@@ -106,7 +106,7 @@ export class OrderService extends EventEmitter {
     try {
       const ack = await this.broker.placeOrder({
         activeId,
-        direction: ENTRY_DIRECTION,
+        direction,
         amount: settings.entryAmount,
         expirySeconds: EXPIRY_SECONDS,
       });

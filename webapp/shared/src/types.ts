@@ -43,46 +43,35 @@ export type AppMode = 'OBSERVATION' | 'DEMO' | 'REAL';
 
 /**
  * Estado de exibicao do card de monitor, derivado do tamanho do prefixo casado, relativo ao
- * tamanho da regra atual (PATTERN_LENGTH). A funcao patternDisplayState() mora em
- * strategyRule.ts (nao aqui) porque precisa de PATTERN_LENGTH/WICK_ELEVENTH_INDEX, que sao
- * definidos la — evita import circular (strategyRule.ts ja importa CandleColor daqui).
+ * tamanho do padrao customizado ativo. A funcao patternDisplayState() mora em strategyRule.ts
+ * (nao aqui) para evitar import circular (strategyRule.ts ja importa este tipo daqui).
  */
-export type PatternDisplayState =
-  | 'MONITORANDO'
-  | 'ACOMPANHANDO'
-  | 'ATENCAO'
-  | 'PRE_SINAL'
-  | 'CONFIRMADO';
+export type PatternDisplayState = 'MONITORANDO' | 'ACOMPANHANDO' | 'CONFIRMADO';
 
-/** Progresso ao vivo do padrao 12 Candles para um ativo. */
+/** Progresso ao vivo do padrao customizado ativo para um ativo. */
 export interface PatternProgress {
   activeId: number;
-  matchedLength: number; // 0..12
-  expected: CandleColor[]; // sempre os 12 elementos da regra
+  matchedLength: number;
+  expected: CandleColor[]; // sempre os elementos do prefixo do padrao ativo
   received: CandleColor[]; // os ultimos `matchedLength` fechados que casam o sufixo
   state: PatternDisplayState;
-  /** Somente presente quando a 11a vela (posicao 10) esta se formando ou ja fechou dentro da janela casada. */
-  wick11?: {
-    currentPercentage: number;
-    requiredPercentage: number;
-    candleClosed: boolean;
-  };
   lastUpdatedAt: number; // epoch ms
 }
 
 /**
  * Uma ocorrencia completa do padrao (ao vivo ou em backtest).
  *
- * Nomes de campo (candle13/candle14) mantidos por estabilidade (schema do banco, tipos ja
- * em uso) mesmo apos a regra ter crescido varias vezes de tamanho — hoje sao, na pratica, a
- * vela de ENTRADA (sempre na direcao ENTRY_DIRECTION) e a vela SEGUINTE a ela, so usada para
- * simular o Gale 1. Ver strategyRule.ts para a regra completa e ENTRY_DIRECTION.
+ * Nomes de campo (candle13/candle14, wickPercentage11) mantidos por estabilidade (schema do
+ * banco, tipos ja em uso) mesmo com o padrao agora sendo customizavel pelo usuario — na
+ * pratica sao a vela de ENTRADA (direcao definida pelo padrao ativo, ver customPattern.ts) e a
+ * vela SEGUINTE a ela, usada so para simular o Gale 1. wickPercentage11 nao e mais calculado
+ * (regra de pavio retirada) — sempre 1, mantido so por compatibilidade de schema.
  */
 export interface PatternOccurrence {
   id: string;
   activeId: number;
   occurredAt: number; // epoch seconds do fechamento da vela de confirmacao
-  candles: Candle[]; // as velas do padrao (ver PATTERN_LENGTH), da mais antiga a mais nova
+  candles: Candle[]; // as velas do prefixo do padrao, da mais antiga a mais nova
   wickPercentage11: number;
   candle13?: Candle; // a vela de ENTRADA — pode ser ausente em backtest se nao houver dado suficiente
   result?: TradeResult;

@@ -5,7 +5,8 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
-import type { AppEvent, AssetInfo } from '@polarium12c/shared';
+import type { AppEvent, AssetInfo, Direction } from '@polarium12c/shared';
+import { confirmPrefix, entryDirectionOf, validatePatternCandles } from '@polarium12c/shared';
 import { openDb } from './db/db.js';
 import {
   loadSettings,
@@ -16,6 +17,12 @@ import {
   listUnknownOrders,
   listOrders,
   updateOrder,
+  listCustomPatterns,
+  getCustomPattern,
+  getActivePattern,
+  createCustomPattern,
+  activateCustomPattern,
+  deleteCustomPattern,
 } from './db/repositories.js';
 import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
@@ -143,17 +150,72 @@ app.put('/api/settings', async (req, res) => {
 });
 
 app.post('/api/backtest', async (req, res) => {
-  const { activeIds, days } = req.body as { activeIds?: number[]; days?: number };
+  const { activeIds, days, patternId } = req.body as { activeIds?: number[]; days?: number; patternId?: string };
   if (!Array.isArray(activeIds) || activeIds.length === 0 || !Number.isFinite(days) || (days ?? 0) <= 0) {
     res.status(400).json({ error: 'Informe activeIds (array nao vazio) e days (numero positivo).' });
     return;
   }
+  const pattern = patternId ? await getCustomPattern(db, patternId) : await getActivePattern(db);
+  if (!pattern) {
+    res.status(400).json({ error: 'Nenhum padrão disponível. Crie um padrão na tela de Padrão.' });
+    return;
+  }
   try {
-    const result = await runBacktest(db, brokerManager.get(), activeIds, days!);
+    const result = await runBacktest(
+      db,
+      brokerManager.get(),
+      activeIds,
+      days!,
+      confirmPrefix(pattern.candles),
+      entryDirectionOf(pattern.candles)
+    );
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+app.get('/api/patterns', async (_req, res) => {
+  res.json(await listCustomPatterns(db));
+});
+
+app.get('/api/patterns/active', async (_req, res) => {
+  res.json((await getActivePattern(db)) ?? null);
+});
+
+app.post('/api/patterns', async (req, res) => {
+  const { name, candles } = req.body as { name?: string; candles?: unknown };
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    res.status(400).json({ error: 'Informe um nome para o padrão.' });
+    return;
+  }
+  if (!validatePatternCandles(candles)) {
+    res.status(400).json({ error: 'O padrão precisa ter pelo menos 2 casas, cada uma verde ou vermelha.' });
+    return;
+  }
+  const pattern = await createCustomPattern(db, { name: name.trim(), candles });
+  res.json(pattern);
+});
+
+app.post('/api/patterns/:id/activate', async (req, res) => {
+  const pattern = await activateCustomPattern(db, req.params.id);
+  if (!pattern) {
+    res.status(404).json({ error: 'Padrão não encontrado.' });
+    return;
+  }
+  await ensureLiveServicesStarted();
+  broadcastRaw('PATTERN_ACTIVATED', pattern);
+  res.json(pattern);
+});
+
+app.delete('/api/patterns/:id', async (req, res) => {
+  const pattern = await getCustomPattern(db, req.params.id);
+  if (pattern?.isActive) {
+    res.status(400).json({ error: 'Não é possível excluir o padrão ativo. Ative outro antes.' });
+    return;
+  }
+  await deleteCustomPattern(db, req.params.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/orders', async (req, res) => {
@@ -237,17 +299,36 @@ async function ensureLiveServicesStarted(): Promise<void> {
     return;
   }
 
-  liveMonitor = new LiveMonitorService(db, broker, settings.selectedActiveIds);
+  const activePattern = await getActivePattern(db);
+  if (!activePattern) {
+    console.log('[live] Nenhum padrão ativo — monitor ao vivo não iniciado. Crie e ative um padrão na tela de Padrão.');
+    return;
+  }
+
+  liveMonitor = new LiveMonitorService(
+    db,
+    broker,
+    settings.selectedActiveIds,
+    confirmPrefix(activePattern.candles),
+    entryDirectionOf(activePattern.candles)
+  );
   liveMonitor.on('event', broadcast);
   liveMonitor.on('event', (event: AppEvent) => {
     if (event.type !== 'PATTERN_CONFIRMED' || event.activeId === undefined) return;
-    const payload = event.payload as { window: unknown; wickPercentage11: number };
+    const payload = event.payload as { window: unknown; wickPercentage11: number; direction: Direction };
     orderService!
-      .handleConfirmed(event.activeId, payload.window as Parameters<OrderService['handleConfirmed']>[1], payload.wickPercentage11)
+      .handleConfirmed(
+        event.activeId,
+        payload.window as Parameters<OrderService['handleConfirmed']>[1],
+        payload.wickPercentage11,
+        payload.direction
+      )
       .catch((err) => console.error('[orders] erro ao processar PATTERN_CONFIRMED:', err));
   });
   await liveMonitor.start();
-  console.log(`[live] Monitor ao vivo iniciado para os ativos: ${settings.selectedActiveIds.join(', ')}`);
+  console.log(
+    `[live] Monitor ao vivo iniciado para os ativos: ${settings.selectedActiveIds.join(', ')} (padrão "${activePattern.name}")`
+  );
 }
 
 /**

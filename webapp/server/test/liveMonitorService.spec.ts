@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { AppEvent, Candle, CandleColor } from '@polarium12c/shared';
-import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import type { AppEvent, Candle, CandleColor, Direction } from '@polarium12c/shared';
 import { getTestDb, resetDb } from './helpers/testDb.js';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
 import { LiveMonitorService } from '../src/live/LiveMonitorService.js';
@@ -10,22 +9,21 @@ import type { Db } from '../src/db/db.js';
 const SIZE = 60;
 const ACTIVE = 81;
 
+/** Padrao de teste (prefixo de confirmacao) + direcao de entrada. */
+const CONFIRM_PATTERN: CandleColor[] = ['G', 'R', 'G', 'R', 'R', 'G', 'R', 'R'];
+const DIRECTION: Direction = 'PUT';
+
 function green(from: number): Candle {
   return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 1, close: 2, high: 2, low: 1, isClosed: true };
 }
 function red(from: number): Candle {
   return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 2, close: 1, high: 2, low: 1, isClosed: true };
 }
-function redWithWick(from: number, wickFraction: number): Candle {
-  return { activeId: ACTIVE, size: SIZE, from, to: from + SIZE, open: 100, close: wickFraction * 100, high: 100, low: 0, isClosed: true };
-}
 
-// redWithWick(i===10) fica sem uso quando a regra atual e curta demais para alcancar essa
-// posicao (WICK_RULE_APPLIES=false) — inofensivo, so nunca e chamada.
-function buildTwelve(baseFrom: number, wick: number): Candle[] {
-  return TWELVE_CANDLES_PATTERN.map((color: CandleColor, i: number) => {
+function buildTwelve(baseFrom: number): Candle[] {
+  return CONFIRM_PATTERN.map((color: CandleColor, i: number) => {
     const from = baseFrom + i * SIZE;
-    return i === 10 ? redWithWick(from, wick) : color === 'G' ? green(from) : red(from);
+    return color === 'G' ? green(from) : red(from);
   });
 }
 
@@ -51,14 +49,14 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
 
-    const service = new LiveMonitorService(db, broker, [ACTIVE]);
+    const service = new LiveMonitorService(db, broker, [ACTIVE], CONFIRM_PATTERN, DIRECTION);
     await service.start();
 
     const received: AppEvent[] = [];
     service.on('event', (e: AppEvent) => received.push(e));
 
     const baseFrom = 1_800_000_000;
-    for (const candle of buildTwelve(baseFrom, 0.5)) {
+    for (const candle of buildTwelve(baseFrom)) {
       broker.pushLiveCandle(ACTIVE, candle);
     }
     await flush();
@@ -79,7 +77,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
   it('candle ainda aberto nunca gera CANDLE_CLOSED nem confirma nada', async () => {
     const broker = new MockBrokerAdapter();
     await broker.authenticate();
-    const service = new LiveMonitorService(db, broker, [ACTIVE]);
+    const service = new LiveMonitorService(db, broker, [ACTIVE], CONFIRM_PATTERN, DIRECTION);
     await service.start();
 
     const received: AppEvent[] = [];
@@ -87,7 +85,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
 
     const baseFrom = 1_800_000_000;
     // Alimenta todas menos a ultima vela do padrao, deixando a ultima posicao "em aberto".
-    const allButLast = buildTwelve(baseFrom, 0.5).slice(0, TWELVE_CANDLES_PATTERN.length - 1);
+    const allButLast = buildTwelve(baseFrom).slice(0, CONFIRM_PATTERN.length - 1);
     for (const c of allButLast) broker.pushLiveCandle(ACTIVE, c);
     await flush();
 
@@ -111,7 +109,7 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     expect(received.some((e) => e.type === 'CANDLE_CLOSED')).toBe(false);
     expect(received.some((e) => e.type === 'PATTERN_CONFIRMED')).toBe(false);
     const progressEvent = received.find((e) => e.type === 'PATTERN_PROGRESS');
-    expect(progressEvent).toBeUndefined(); // candle aberto nunca alimenta o engine, so o preview (nao aplicavel a esta regra)
+    expect(progressEvent).toBeUndefined(); // candle aberto nunca alimenta o engine
 
     service.stop();
   });

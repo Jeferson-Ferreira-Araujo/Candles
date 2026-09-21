@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/db.js';
 import {
   CANDLE_SIZE_M1,
-  ENTRY_DIRECTION,
   type BacktestDaySummary,
   type BacktestRun,
   type BacktestSummary,
   type Candle,
+  type CandleColor,
   type Direction,
   type PatternOccurrence,
   type TradeResult,
@@ -107,7 +107,8 @@ function buildSummary(
   activeIds: number[],
   from: number,
   to: number,
-  occurrences: PatternOccurrence[]
+  occurrences: PatternOccurrence[],
+  entryDirection: Direction
 ): BacktestSummary {
   const occByDayActive = new Map<string, Map<number, number>>();
   for (const occ of occurrences) {
@@ -145,10 +146,10 @@ function buildSummary(
 
   const lossOccurrences = occurrences.filter((o) => o.result === 'LOSS');
   const lossesWithCandle14 = lossOccurrences.filter((o) => o.candle14);
-  // "Mesma direcao" no gale repete ENTRY_DIRECTION; "contraria" inverte para a outra.
+  // "Mesma direcao" no gale repete a direcao de entrada do padrao ativo; "contraria" inverte.
   const reentry: BacktestSummary['reentry'] = {
-    combinedSameDirection: tallyResults(combineWithGale1(occurrences, ENTRY_DIRECTION)),
-    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, oppositeDirection(ENTRY_DIRECTION))),
+    combinedSameDirection: tallyResults(combineWithGale1(occurrences, entryDirection)),
+    combinedOppositeDirection: tallyResults(combineWithGale1(occurrences, oppositeDirection(entryDirection))),
     consideredLosses: lossOccurrences.length,
     missingCandle14: lossOccurrences.length - lossesWithCandle14.length,
   };
@@ -164,9 +165,9 @@ function buildSummary(
 }
 
 /**
- * Roda a estrategia "12 Candles" (regra congelada — ver strategy/twelveCandlesEngine.ts)
- * contra o historico M1 dos ativos informados, registra TODAS as ocorrencias e devolve o
- * resumo (todas as ocorrencias vs somente a primeira de cada dia, contagem por dia/ativo).
+ * Roda o padrao customizado informado contra o historico M1 dos ativos informados, registra
+ * TODAS as ocorrencias e devolve o resumo (todas as ocorrencias vs somente a primeira de cada
+ * dia, contagem por dia/ativo).
  *
  * Nao envia nenhuma ordem — e leitura de historico + calculo local.
  */
@@ -174,7 +175,9 @@ export async function runBacktest(
   db: Db,
   broker: BrokerAdapter,
   activeIds: number[],
-  days: number
+  days: number,
+  confirmPattern: CandleColor[],
+  entryDirection: Direction
 ): Promise<BacktestResult> {
   const id = `backtest-${randomUUID()}`;
   const startedAt = Date.now();
@@ -190,29 +193,29 @@ export async function runBacktest(
       .filter((c) => c.isClosed)
       .sort((a, b) => a.from - b.from);
 
-    const engine = new TwelveCandlesEngine();
+    const engine = new TwelveCandlesEngine(confirmPattern);
 
     for (let i = 0; i < candles.length; i++) {
       const candle = candles[i]!;
       const tick = engine.onCandleClosed(activeId, candle);
 
       if (tick.kind === 'CONFIRMED') {
-        // candle13 = a entrada de verdade (hoje a 14a vela real, ver ENTRY_DIRECTION em
-        // strategyRule.ts) — nome do campo mantido por estabilidade de schema/tipos.
+        // candle13 = a entrada de verdade (direcao do padrao ativo, ver customPattern.ts) —
+        // nome do campo mantido por estabilidade de schema/tipos.
         const candle13 = candles[i + 1]; // pode ser undefined se for o ultimo candle do periodo
         const candle14 = candles[i + 2]; // candle seguinte a entrada — so usado para simular o Gale 1
         allOccurrences.push({
           // Prefixado com o id da propria rodada do backtest: sem isso, rodar o MESMO
           // backtest (mesmo ativo/periodo) duas vezes gerava o mesmo id de novo (baseado
           // so em activeId + horario da vela de confirmacao), violando o UNIQUE global da tabela.
-          id: `${id}-12CANDLES-${activeId}-${candle.to}-${ENTRY_DIRECTION}`,
+          id: `${id}-12CANDLES-${activeId}-${candle.to}-${entryDirection}`,
           activeId,
           occurredAt: candle.to,
           candles: tick.window,
           wickPercentage11: tick.wickPercentage11,
           candle13,
           candle14,
-          result: candle13 ? computeResultForDirection(candle13, ENTRY_DIRECTION) : undefined,
+          result: candle13 ? computeResultForDirection(candle13, entryDirection) : undefined,
           isFirstOfDay: false, // marcado abaixo, apos ordenar globalmente
         });
       }
@@ -235,7 +238,7 @@ export async function runBacktest(
   const finishedAt = Date.now();
   await finishBacktest(db, id, finishedAt);
 
-  const summary = buildSummary(id, activeIds, from, now, allOccurrences);
+  const summary = buildSummary(id, activeIds, from, now, allOccurrences, entryDirection);
 
   return { run: { id, activeIds, days, startedAt, finishedAt }, occurrences: allOccurrences, summary };
 }

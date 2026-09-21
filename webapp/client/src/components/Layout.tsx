@@ -7,6 +7,7 @@ import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Monitor', hint: 'Tempo real', icon: '📈' },
+  { to: '/pattern', label: 'Padrão', hint: 'Editor de padrão', icon: '🕯️' },
   { to: '/backtest', label: 'Validação 30D', hint: 'Histórico da estratégia', icon: '🗓️' },
   { to: '/operations', label: 'Operações', hint: 'Sinais e resultados', icon: '📋' },
   { to: '/settings', label: 'Configurações', hint: 'Robô e risco', icon: '⚙️' },

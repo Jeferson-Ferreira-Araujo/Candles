@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Db } from '../db/db.js';
-import { CANDLE_SIZE_M1, type AppEvent, type Candle, type PatternProgress } from '@polarium12c/shared';
+import { CANDLE_SIZE_M1, type AppEvent, type Candle, type CandleColor, type Direction, type PatternProgress } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { TwelveCandlesEngine } from '../strategy/twelveCandlesEngine.js';
 import { insertEvent, saveCandle } from '../db/repositories.js';
@@ -16,7 +16,7 @@ import { insertEvent, saveCandle } from '../db/repositories.js';
  * monitor.
  */
 export class LiveMonitorService extends EventEmitter {
-  private readonly engine = new TwelveCandlesEngine();
+  private readonly engine: TwelveCandlesEngine;
   private unsubscribers: Array<() => void> = [];
   private started = false;
   // Uma fila (Promise encadeada) por ativo: com Postgres real, salvar cada candle envolve
@@ -31,9 +31,12 @@ export class LiveMonitorService extends EventEmitter {
     private readonly db: Db,
     private readonly broker: BrokerAdapter,
     private readonly activeIds: number[],
+    confirmPattern: CandleColor[],
+    private readonly entryDirection: Direction,
     private readonly candleSize: number = CANDLE_SIZE_M1
   ) {
     super();
+    this.engine = new TwelveCandlesEngine(confirmPattern);
   }
 
   async start(): Promise<void> {
@@ -83,17 +86,9 @@ export class LiveMonitorService extends EventEmitter {
   }
 
   private async handleCandle(activeId: number, candle: Candle): Promise<void> {
-    if (!candle.isClosed) {
-      // Candle ainda se formando: so serve para o preview em tempo real do pavio da 11a
-      // (quando aplicavel). Nunca alimenta o engine de confirmacao — "nunca confirmar
-      // usando candle ainda aberto".
-      const preview = this.engine.previewEleventh(activeId, candle);
-      if (preview) {
-        const progress = this.engine.getProgress(activeId);
-        this.emitEvent('PATTERN_PROGRESS', activeId, { progress: { ...progress, wick11: { ...preview, candleClosed: false } } });
-      }
-      return;
-    }
+    // Candle ainda se formando: sem a regra de pavio, nao ha nenhum preview possivel —
+    // nunca alimenta o engine ("nunca confirmar usando candle ainda aberto").
+    if (!candle.isClosed) return;
 
     await saveCandle(this.db, candle, 'live');
     this.emitEvent('CANDLE_CLOSED', activeId, { candle });
@@ -105,21 +100,12 @@ export class LiveMonitorService extends EventEmitter {
       return;
     }
 
-    if (tick.kind === 'INVALIDATED') {
-      this.emitEvent('PATTERN_INVALIDATED', activeId, {
-        progress: tick.progress,
-        reason: tick.reason,
-        wickPercentage11: tick.wickPercentage11,
-        window: tick.window,
-      });
-      return;
-    }
-
     // CONFIRMED — este e o unico ponto que uma futura camada de ordens deve escutar.
     this.emitEvent('PATTERN_CONFIRMED', activeId, {
       progress: tick.progress,
       window: tick.window,
       wickPercentage11: tick.wickPercentage11,
+      direction: this.entryDirection,
     });
   }
 

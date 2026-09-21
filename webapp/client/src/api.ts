@@ -1,4 +1,4 @@
-import type { AssetInfo, BacktestSummary, DailyResult, OrderRecord, PatternOccurrence, Settings } from '@polarium12c/shared';
+import type { AssetInfo, BacktestSummary, CustomPattern, DailyResult, OrderRecord, PatternOccurrence, Settings } from '@polarium12c/shared';
 
 interface Balance {
   id: string;
@@ -74,12 +74,27 @@ export const api = {
       body: JSON.stringify(settings),
     }).then((r) => json<Settings>(r)),
 
-  runBacktest: (activeIds: number[], days: number) =>
+  runBacktest: (activeIds: number[], days: number, patternId?: string) =>
     req('/api/backtest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activeIds, days }),
+      body: JSON.stringify({ activeIds, days, patternId }),
     }).then((r) => json<{ run: { id: string }; occurrences: PatternOccurrence[]; summary: BacktestSummary }>(r)),
+
+  listPatterns: () => req('/api/patterns').then((r) => json<CustomPattern[]>(r)),
+
+  getActivePattern: () => req('/api/patterns/active').then((r) => json<CustomPattern | null>(r)),
+
+  createPattern: (input: { name: string; candles: CustomPattern['candles'] }) =>
+    req('/api/patterns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => json<CustomPattern>(r)),
+
+  activatePattern: (id: string) => req(`/api/patterns/${id}/activate`, { method: 'POST' }).then((r) => json<CustomPattern>(r)),
+
+  deletePattern: (id: string) => req(`/api/patterns/${id}`, { method: 'DELETE' }).then((r) => json<{ ok: true }>(r)),
 
   getEvents: (limit = 200) => req(`/api/events?limit=${limit}`).then((r) => json<import('@polarium12c/shared').AppEvent[]>(r)),
 

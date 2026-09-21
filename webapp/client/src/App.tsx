@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout.js';
 import { MonitorPage } from './pages/MonitorPage.js';
+import { PatternBuilderPage } from './pages/PatternBuilderPage.js';
 import { BacktestPage } from './pages/BacktestPage.js';
 import { OperationsPage } from './pages/OperationsPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
@@ -43,6 +44,7 @@ export default function App() {
         }
       >
         <Route index element={<MonitorPage />} />
+        <Route path="pattern" element={<PatternBuilderPage />} />
         <Route path="backtest" element={<BacktestPage />} />
         <Route path="operations" element={<OperationsPage />} />
         <Route path="settings" element={<SettingsPage />} />

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AssetInfo, BacktestSummary, PatternOccurrence, Settings } from '@polarium12c/shared';
-import { WICK_RULE_APPLIES } from '@polarium12c/shared';
 import { api } from '../api.js';
 import { AssetPicker } from '../components/AssetPicker.js';
 
@@ -140,7 +139,6 @@ export function BacktestPage() {
                 <div key={occ.id} className="flex flex-wrap gap-x-3 gap-y-1 text-slate-300">
                   <span className="text-slate-600 w-40 shrink-0">{new Date(occ.occurredAt * 1000).toLocaleString('pt-BR')}</span>
                   <span className="w-28 shrink-0">{nameOf(occ.activeId)}</span>
-                  {WICK_RULE_APPLIES && <span className="w-20 shrink-0">pavio {(occ.wickPercentage11 * 100).toFixed(1)}%</span>}
                   <span
                     className={
                       occ.result === 'WIN' ? 'text-emerald-400' : occ.result === 'LOSS' ? 'text-rose-400' : 'text-slate-400'

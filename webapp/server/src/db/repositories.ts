@@ -1,7 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import type {
   AppEvent,
   BacktestRun,
   Candle,
+  CandleColor,
+  CustomPattern,
   DailyResult,
   OrderRecord,
   PatternOccurrence,
@@ -301,6 +304,62 @@ export async function insertBacktestOccurrence(db: Db, backtestId: string, occ: 
       occ.isFirstOfDay,
     ]
   );
+}
+
+function rowToPattern(row: Record<string, unknown>): CustomPattern {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    candles: row.candles_json as CandleColor[],
+    isActive: row.is_active as boolean,
+    createdAt: Number(row.created_at),
+  };
+}
+
+export async function listCustomPatterns(db: Db): Promise<CustomPattern[]> {
+  const { rows } = await db.query(`SELECT * FROM custom_patterns ORDER BY created_at DESC`);
+  return rows.map(rowToPattern);
+}
+
+export async function getCustomPattern(db: Db, id: string): Promise<CustomPattern | undefined> {
+  const { rows } = await db.query(`SELECT * FROM custom_patterns WHERE id = $1`, [id]);
+  return rows[0] ? rowToPattern(rows[0]) : undefined;
+}
+
+export async function getActivePattern(db: Db): Promise<CustomPattern | undefined> {
+  const { rows } = await db.query(`SELECT * FROM custom_patterns WHERE is_active = TRUE LIMIT 1`);
+  return rows[0] ? rowToPattern(rows[0]) : undefined;
+}
+
+export async function createCustomPattern(db: Db, input: { name: string; candles: CandleColor[] }): Promise<CustomPattern> {
+  const pattern: CustomPattern = {
+    id: `pattern-${randomUUID()}`,
+    name: input.name,
+    candles: input.candles,
+    isActive: false,
+    createdAt: Date.now(),
+  };
+  await db.query(`INSERT INTO custom_patterns (id, name, candles_json, is_active, created_at) VALUES ($1, $2, $3, $4, $5)`, [
+    pattern.id,
+    pattern.name,
+    JSON.stringify(pattern.candles),
+    pattern.isActive,
+    pattern.createdAt,
+  ]);
+  return pattern;
+}
+
+/** Desativa qualquer outro padrao e ativa este — no maximo 1 padrao ativo por vez (o monitor ao vivo usa so o ativo). */
+export async function activateCustomPattern(db: Db, id: string): Promise<CustomPattern | undefined> {
+  const pattern = await getCustomPattern(db, id);
+  if (!pattern) return undefined;
+  await db.query(`UPDATE custom_patterns SET is_active = FALSE WHERE is_active = TRUE`);
+  await db.query(`UPDATE custom_patterns SET is_active = TRUE WHERE id = $1`, [id]);
+  return { ...pattern, isActive: true };
+}
+
+export async function deleteCustomPattern(db: Db, id: string): Promise<void> {
+  await db.query(`DELETE FROM custom_patterns WHERE id = $1`, [id]);
 }
 
 export async function listBacktestOccurrences(db: Db, backtestId: string): Promise<PatternOccurrence[]> {

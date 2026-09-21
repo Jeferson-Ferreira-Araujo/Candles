@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Candle } from '@polarium12c/shared';
-import { TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
+import type { Candle, CandleColor, Direction } from '@polarium12c/shared';
 import { getTestDb, resetDb } from './helpers/testDb.js';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
 import { runBacktest } from '../src/backtest/backtestRunner.js';
@@ -9,30 +8,28 @@ import type { Db } from '../src/db/db.js';
 
 const SIZE = 60;
 
+/** Padrao de teste (prefixo de confirmacao, NAO inclui a vela de entrada) + direcao de entrada. */
+const CONFIRM_PATTERN: CandleColor[] = ['G', 'R', 'G', 'R', 'R', 'G', 'R', 'R'];
+const DIRECTION: Direction = 'PUT';
+
 function green(activeId: number, from: number): Candle {
   return { activeId, size: SIZE, from, to: from + SIZE, open: 1, close: 2, high: 2, low: 1, isClosed: true };
 }
 function red(activeId: number, from: number): Candle {
   return { activeId, size: SIZE, from, to: from + SIZE, open: 2, close: 1, high: 2, low: 1, isClosed: true };
 }
-function redWithWick(activeId: number, from: number, wickFraction: number): Candle {
-  return { activeId, size: SIZE, from, to: from + SIZE, open: 100, close: wickFraction * 100, high: 100, low: 0, isClosed: true };
-}
 
 /**
- * Constroi N ocorrencias consecutivas e nao sobrepostas do padrao completo (TWELVE_CANDLES_PATTERN.length
- * velas do padrao + 1 vela de entrada). A entrada e sempre ENTRY_DIRECTION (hoje PUT) —
- * entao `entryCandleUp=true` (vela de entrada verde) produz LOSS, e `false` (vermelha) produz WIN.
- * redWithWick fica sem uso quando a regra atual e curta demais para alcancar a posicao 10
- * (WICK_RULE_APPLIES=false) — inofensivo, so nao e chamada.
+ * Constroi N ocorrencias consecutivas e nao sobrepostas do padrao completo (CONFIRM_PATTERN.length
+ * velas do padrao + 1 vela de entrada). A entrada e sempre DIRECTION (PUT) — entao
+ * `entryCandleUp=true` (vela de entrada verde) produz LOSS, e `false` (vermelha) produz WIN.
  */
 function buildOccurrences(activeId: number, baseFrom: number, count: number, entryCandleUp: boolean): Candle[] {
   const candles: Candle[] = [];
   let from = baseFrom;
   for (let n = 0; n < count; n++) {
-    for (let i = 0; i < TWELVE_CANDLES_PATTERN.length; i++) {
-      const color = TWELVE_CANDLES_PATTERN[i];
-      candles.push(i === 10 ? redWithWick(activeId, from, 0.5) : color === 'G' ? green(activeId, from) : red(activeId, from));
+    for (const color of CONFIRM_PATTERN) {
+      candles.push(color === 'G' ? green(activeId, from) : red(activeId, from));
       from += SIZE;
     }
     // Vela de entrada (candle13 no tipo PatternOccurrence) + 1 candle "separador" neutro para
@@ -93,7 +90,7 @@ describe('runBacktest', () => {
     const candles = buildOccurrences(activeId, dayStart, 2, false);
     broker.seedCandles(activeId, candles);
 
-    const { occurrences, summary } = await runBacktest(db, broker, [activeId], 30);
+    const { occurrences, summary } = await runBacktest(db, broker, [activeId], 30, CONFIRM_PATTERN, DIRECTION);
 
     expect(occurrences).toHaveLength(2);
     expect(occurrences.every((o) => o.result === 'WIN')).toBe(true);
@@ -117,7 +114,7 @@ describe('runBacktest', () => {
     const candles = buildOccurrences(activeId, safeDayStart(), 1, true);
     broker.seedCandles(activeId, candles);
 
-    const { occurrences } = await runBacktest(db, broker, [activeId], 30);
+    const { occurrences } = await runBacktest(db, broker, [activeId], 30, CONFIRM_PATTERN, DIRECTION);
     expect(occurrences).toHaveLength(1);
     expect(occurrences[0]!.result).toBe('LOSS');
   });
@@ -138,7 +135,7 @@ describe('runBacktest', () => {
     loserCandles.push(green(loserActiveId, candle14From));
     broker.seedCandles(loserActiveId, loserCandles);
 
-    const { summary } = await runBacktest(db, broker, [winnerActiveId, loserActiveId], 30);
+    const { summary } = await runBacktest(db, broker, [winnerActiveId, loserActiveId], 30, CONFIRM_PATTERN, DIRECTION);
 
     expect(summary.reentry.consideredLosses).toBe(1); // so o ativo B perdeu a 1a entrada
     expect(summary.reentry.missingCandle14).toBe(0);
@@ -154,7 +151,7 @@ describe('runBacktest', () => {
     const activeId = 2298;
     broker.seedCandles(activeId, []); // nenhum candle historico -> nenhuma ocorrencia
 
-    const { summary } = await runBacktest(db, broker, [activeId], 3);
+    const { summary } = await runBacktest(db, broker, [activeId], 3, CONFIRM_PATTERN, DIRECTION);
     expect(summary.perDay.length).toBeGreaterThanOrEqual(3);
     expect(summary.perDay.every((d) => d.bucket === 'NONE' && d.total === 0)).toBe(true);
   });
