@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AssetInfo, Direction, PatternOccurrence } from '@polarium12c/shared';
 import { ENTRY_DIRECTION, candleColor } from '@polarium12c/shared';
 
@@ -100,12 +100,20 @@ function OccurrencePattern({ occurrence }: { occurrence: PatternOccurrence }) {
  */
 interface AutoAnalysisCardProps {
   state: AutoAnalysisState;
-  /** Reroda a mesma analise restrita a um unico ativo — usado pelo botao dentro do detalhe expandido. */
-  onAnalyzeSingleAsset?: (asset: AssetInfo) => void;
+  /** Reroda a mesma analise restrita a um unico ativo, com a janela de dias escolhida ali —
+   * usado pelo botao dentro do detalhe expandido. */
+  onAnalyzeSingleAsset?: (asset: AssetInfo, days: number) => void;
 }
 
 export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCardProps) {
   const [expandedAssetId, setExpandedAssetId] = useState<number | null>(null);
+  // Comeca igual ao periodo do 1o resultado, mas o usuario pode mudar so pra reconferir um
+  // ativo especifico numa janela maior/menor sem alterar a configuracao global.
+  const [customDays, setCustomDays] = useState(7);
+
+  useEffect(() => {
+    if (state.status === 'done') setCustomDays(state.days);
+  }, [state.status === 'done' ? state.days : null]);
 
   if (state.status === 'idle') return null;
 
@@ -225,16 +233,28 @@ export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCa
                   {isExpanded && (
                     <div className="border-t border-slate-800 px-3 py-2 space-y-2">
                       {onAnalyzeSingleAsset && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const asset = assets.find((x) => x.id === a.id);
-                            if (asset) onAnalyzeSingleAsset(asset);
-                          }}
-                          className="text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-950/60 px-2 py-1"
-                        >
-                          🔁 Rodar só este ativo de novo
-                        </button>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <label className="text-xs text-slate-500">
+                            Dias:
+                            <input
+                              type="number"
+                              min={1}
+                              value={customDays}
+                              onChange={(e) => setCustomDays(Math.max(1, Number(e.target.value)))}
+                              className="w-14 ml-1 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-200"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const asset = assets.find((x) => x.id === a.id);
+                              if (asset) onAnalyzeSingleAsset(asset, customDays);
+                            }}
+                            className="text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-950/60 px-2 py-1"
+                          >
+                            🔁 Rodar só este ativo de novo
+                          </button>
+                        </div>
                       )}
                       {occurrences.length === 0 ? (
                         <div className="text-xs text-slate-500">Detalhe indisponível para este ativo.</div>

@@ -85,8 +85,11 @@ export function MonitorPage() {
   //
   // `assetsOverride` permite reaproveitar exatamente essa mesma logica/formato pra analisar
   // so um ativo especifico (botao "Rodar só este ativo" no ranking), sem duplicar o fluxo.
-  async function runAutoAnalysis(assetsOverride?: AssetInfo[]) {
-    const days = settings?.analysisDays ?? DEFAULT_ANALYSIS_DAYS;
+  // `daysOverride` permite reconferir um unico ativo numa janela diferente da configurada em
+  // Settings, sem mudar a configuracao global (util depois de ver o 1o resultado de um ativo
+  // e querer testar, por exemplo, 30 dias so pra ele).
+  async function runAutoAnalysis(assetsOverride?: AssetInfo[], daysOverride?: number) {
+    const days = daysOverride ?? settings?.analysisDays ?? DEFAULT_ANALYSIS_DAYS;
     const allAssets = assetsOverride ?? (await api.getAssets().catch(() => [] as AssetInfo[]));
     if (allAssets.length === 0) {
       setAutoAnalysis({ status: 'empty' });
@@ -220,7 +223,10 @@ export function MonitorPage() {
         </button>
       </div>
 
-      <AutoAnalysisCard state={autoAnalysis} onAnalyzeSingleAsset={(asset) => runAutoAnalysis([asset])} />
+      <AutoAnalysisCard
+        state={autoAnalysis}
+        onAnalyzeSingleAsset={(asset, days) => runAutoAnalysis([asset], days)}
+      />
 
       <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 flex items-center gap-4 sm:gap-6 flex-wrap">
         <div className="flex items-center gap-2 text-emerald-300 font-semibold">
