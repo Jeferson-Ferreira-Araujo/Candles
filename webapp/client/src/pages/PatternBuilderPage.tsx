@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AssetInfo, CandleColor, CustomPattern } from '@polarium12c/shared';
 import { entryDirectionOf } from '@polarium12c/shared';
 import { api } from '../api.js';
+import { AssetPicker } from '../components/AssetPicker.js';
 import { AutoAnalysisCard, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { runAutoAnalysisScan } from '../lib/autoAnalysis.js';
 
@@ -28,8 +29,12 @@ export function PatternBuilderPage() {
   const [error, setError] = useState<string | null>(null);
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [analysisDays, setAnalysisDays] = useState(7);
+  const [testAllAssets, setTestAllAssets] = useState(true);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
   const [analyzingPatternId, setAnalyzingPatternId] = useState<string | null>(null);
+  const [analyzingPattern, setAnalyzingPattern] = useState<CustomPattern | null>(null);
   const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisState>({ status: 'idle' });
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   useEffect(() => {
     refreshPatterns();
@@ -93,10 +98,17 @@ export function PatternBuilderPage() {
     }
   }
 
-  async function runAnalysis(pattern: CustomPattern) {
+  async function runAnalysis(pattern: CustomPattern, assetsOverride?: AssetInfo[], daysOverride?: number) {
+    const targetAssets = assetsOverride ?? (testAllAssets ? assets : assets.filter((a) => selectedAssetIds.includes(a.id)));
+    if (targetAssets.length === 0) {
+      setAnalysisError('Selecione pelo menos um ativo (ou marque "Testar todos os ativos") antes de rodar a análise.');
+      return;
+    }
+    setAnalysisError(null);
     setAnalyzingPatternId(pattern.id);
+    setAnalyzingPattern(pattern);
     const direction = entryDirectionOf(pattern.candles);
-    const result = await runAutoAnalysisScan(assets, analysisDays, pattern.id, direction, setAutoAnalysis);
+    const result = await runAutoAnalysisScan(targetAssets, daysOverride ?? analysisDays, pattern.id, direction, setAutoAnalysis);
     setAutoAnalysis(result);
   }
 
@@ -216,6 +228,25 @@ export function PatternBuilderPage() {
           </label>
         </div>
 
+        <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3 space-y-2">
+          <div className="text-xs text-slate-500">
+            Ativos usados em "Rodar análise" — teste com poucos ativos primeiro e depois expanda para todos.
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={testAllAssets}
+              onChange={(e) => setTestAllAssets(e.target.checked)}
+              className="accent-sky-500"
+            />
+            Testar todos os ativos OTC digital
+          </label>
+          {!testAllAssets && (
+            <AssetPicker value={selectedAssetIds} onChange={setSelectedAssetIds} placeholder="Buscar ativo para testar..." />
+          )}
+          {analysisError && <div className="text-xs text-rose-400">{analysisError}</div>}
+        </div>
+
         {patterns.length === 0 ? (
           <div className="text-sm text-slate-500">Nenhum padrão salvo ainda.</div>
         ) : (
@@ -257,7 +288,9 @@ export function PatternBuilderPage() {
                   disabled={autoAnalysis.status === 'loading'}
                   className="text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-950/60 disabled:opacity-50 px-2 py-1"
                 >
-                  {analyzingPatternId === p.id && autoAnalysis.status === 'loading' ? 'Analisando...' : 'Rodar análise'}
+                  {analyzingPatternId === p.id && autoAnalysis.status === 'loading'
+                    ? 'Analisando...'
+                    : `Rodar análise (${testAllAssets ? 'todos' : `${selectedAssetIds.length} ativo(s)`})`}
                 </button>
                 <button
                   onClick={() => remove(p.id)}
@@ -273,7 +306,12 @@ export function PatternBuilderPage() {
         )}
       </div>
 
-      {analyzingPatternId && <AutoAnalysisCard state={autoAnalysis} />}
+      {analyzingPatternId && analyzingPattern && (
+        <AutoAnalysisCard
+          state={autoAnalysis}
+          onAnalyzeSingleAsset={(asset, days) => runAnalysis(analyzingPattern, [asset], days)}
+        />
+      )}
     </div>
   );
 }
