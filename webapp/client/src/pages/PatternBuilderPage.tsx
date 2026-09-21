@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AssetInfo, CandleColor, CustomPattern } from '@polarium12c/shared';
 import { entryDirectionOf } from '@polarium12c/shared';
 import { api } from '../api.js';
@@ -35,11 +35,18 @@ export function PatternBuilderPage() {
   const [analyzingPattern, setAnalyzingPattern] = useState<CustomPattern | null>(null);
   const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisState>({ status: 'idle' });
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     refreshPatterns();
     api.getAssets().then(setAssets).catch(() => {});
   }, []);
+
+  // Rola ate o card de resultado assim que uma analise comeca, para ficar visivel sem
+  // precisar procurar a tela toda (senao parece que a analise "travou" enquanto roda).
+  useEffect(() => {
+    if (analyzingPatternId) resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [analyzingPatternId]);
 
   function refreshPatterns() {
     api.listPatterns().then(setPatterns).catch(() => {});
@@ -286,9 +293,14 @@ export function PatternBuilderPage() {
                   disabled={autoAnalysis.status === 'loading'}
                   className="text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-950/60 disabled:opacity-50 px-2 py-1"
                 >
-                  {analyzingPatternId === p.id && autoAnalysis.status === 'loading'
-                    ? 'Analisando...'
-                    : `Rodar análise (${testAllAssets ? 'todos' : `${selectedAssetIds.length} ativo(s)`})`}
+                  {analyzingPatternId === p.id && autoAnalysis.status === 'loading' ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-3 w-3 rounded-full border-2 border-sky-300 border-t-transparent animate-spin" />
+                      Analisando...
+                    </span>
+                  ) : (
+                    `Rodar análise (${testAllAssets ? 'todos' : `${selectedAssetIds.length} ativo(s)`})`
+                  )}
                 </button>
                 <button
                   onClick={() => remove(p.id)}
@@ -298,18 +310,25 @@ export function PatternBuilderPage() {
                 >
                   Excluir
                 </button>
+                {analyzingPatternId === p.id && autoAnalysis.status === 'loading' && (
+                  <div className="w-full flex items-center gap-2 text-xs text-sky-300">
+                    <span className="inline-block h-3 w-3 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+                    Consultando {autoAnalysis.completed}/{autoAnalysis.total} ativo(s)
+                    {autoAnalysis.currentAssetName ? ` — ${autoAnalysis.currentAssetName}` : ''}...
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {analyzingPatternId && analyzingPattern && (
+      <div ref={resultsRef}>
         <AutoAnalysisCard
           state={autoAnalysis}
-          onAnalyzeSingleAsset={(asset, days) => runAnalysis(analyzingPattern, [asset], days)}
+          onAnalyzeSingleAsset={analyzingPattern ? (asset, days) => runAnalysis(analyzingPattern, [asset], days) : undefined}
         />
-      )}
+      </div>
     </div>
   );
 }
