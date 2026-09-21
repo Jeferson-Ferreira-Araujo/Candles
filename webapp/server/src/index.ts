@@ -26,6 +26,7 @@ import {
 } from './db/repositories.js';
 import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
+import { runPatternDiscovery } from './discovery/patternDiscovery.js';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
@@ -169,6 +170,20 @@ app.post('/api/backtest', async (req, res) => {
       confirmPrefix(pattern.candles),
       entryDirectionOf(pattern.candles)
     );
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/api/pattern-discovery', async (req, res) => {
+  const { activeId, days } = req.body as { activeId?: number; days?: number };
+  if (!Number.isFinite(activeId) || !Number.isFinite(days) || (days ?? 0) <= 0) {
+    res.status(400).json({ error: 'Informe activeId e days (numero positivo).' });
+    return;
+  }
+  try {
+    const result = await runPatternDiscovery(brokerManager.get(), activeId!, days!);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

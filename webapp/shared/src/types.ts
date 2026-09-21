@@ -231,6 +231,33 @@ export interface BacktestSummary {
   };
 }
 
+/**
+ * Uma sequencia de cores (G/R) que se repetiu no historico com frequencia notavel — achada
+ * pela tela "Descobrir Padrões", que varre o historico procurando por sequencias que se
+ * repetem, para depois recriar manualmente na tela de Padrão. `sequence` mapeia direto para
+ * as casas do editor de padrao (a ultima e a vela de entrada; as demais sao o prefixo de
+ * confirmacao). `avgSignalWickPercentage`/`validSignalWickShare` sao sobre a PENULTIMA vela
+ * da sequencia (a vela de sinal) — mesma regra de pavio (SIGNAL_WICK_MIN_LOWER_PERCENTAGE)
+ * usada pelo motor ao vivo, para o usuario avaliar se a sequencia encontrada tende a produzir
+ * sinais validos ou nao.
+ */
+export interface DiscoveredPattern {
+  sequence: CandleColor[];
+  length: number;
+  totalOccurrences: number;
+  bestDay: string; // YYYY-MM-DD (UTC) — dia com mais repeticoes
+  bestDayCount: number; // quantas vezes essa sequencia ocorreu nesse dia
+  avgSignalWickPercentage: number; // media do pavio inferior da penultima vela, entre 0 e 1
+  validSignalWickShare: number; // fracao das ocorrencias cuja penultima vela respeita a regra do pavio (0..1)
+}
+
+export interface PatternDiscoveryResult {
+  activeId: number;
+  days: number;
+  candleCount: number;
+  patterns: DiscoveredPattern[];
+}
+
 /** Payload da conexao/broker exibido no cabecalho da aplicacao. */
 export interface ConnectionStatus {
   connected: boolean;

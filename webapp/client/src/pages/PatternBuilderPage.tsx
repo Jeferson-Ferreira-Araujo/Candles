@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { AssetInfo, CandleColor, CustomPattern } from '@polarium12c/shared';
 import { entryDirectionOf } from '@polarium12c/shared';
 import { api } from '../api.js';
@@ -22,7 +23,13 @@ function emptySlots(n: number): (CandleColor | null)[] {
  * restrito a este padrao) e para ativar como a regra usada pelo monitor ao vivo.
  */
 export function PatternBuilderPage() {
-  const [slots, setSlots] = useState<(CandleColor | null)[]>(() => emptySlots(DEFAULT_SLOTS));
+  const location = useLocation();
+  // Vem da tela "Descobrir Padrões" (botao "Usar este padrão") — pre-preenche as casas com a
+  // sequencia encontrada, pronta pra revisar/ajustar e salvar.
+  const prefillCandles = (location.state as { prefillCandles?: CandleColor[] } | null)?.prefillCandles;
+  const [slots, setSlots] = useState<(CandleColor | null)[]>(() =>
+    prefillCandles && prefillCandles.length >= MIN_SLOTS ? [...prefillCandles] : emptySlots(DEFAULT_SLOTS)
+  );
   const [name, setName] = useState('');
   const [patterns, setPatterns] = useState<CustomPattern[]>([]);
   const [saving, setSaving] = useState(false);

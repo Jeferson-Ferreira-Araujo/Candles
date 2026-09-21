@@ -1,4 +1,13 @@
-import type { AssetInfo, BacktestSummary, CustomPattern, DailyResult, OrderRecord, PatternOccurrence, Settings } from '@polarium12c/shared';
+import type {
+  AssetInfo,
+  BacktestSummary,
+  CustomPattern,
+  DailyResult,
+  OrderRecord,
+  PatternDiscoveryResult,
+  PatternOccurrence,
+  Settings,
+} from '@polarium12c/shared';
 
 interface Balance {
   id: string;
@@ -95,6 +104,13 @@ export const api = {
   activatePattern: (id: string) => req(`/api/patterns/${id}/activate`, { method: 'POST' }).then((r) => json<CustomPattern>(r)),
 
   deletePattern: (id: string) => req(`/api/patterns/${id}`, { method: 'DELETE' }).then((r) => json<{ ok: true }>(r)),
+
+  discoverPatterns: (activeId: number, days: number) =>
+    req('/api/pattern-discovery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeId, days }),
+    }).then((r) => json<PatternDiscoveryResult>(r)),
 
   getEvents: (limit = 200) => req(`/api/events?limit=${limit}`).then((r) => json<import('@polarium12c/shared').AppEvent[]>(r)),
 
