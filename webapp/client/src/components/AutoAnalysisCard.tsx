@@ -1,7 +1,14 @@
-import type { AssetInfo, Direction } from '@polarium12c/shared';
-import { ENTRY_DIRECTION } from '@polarium12c/shared';
+import { useState } from 'react';
+import type { AssetInfo, Direction, PatternOccurrence } from '@polarium12c/shared';
+import { ENTRY_DIRECTION, candleColor } from '@polarium12c/shared';
 
 const OPPOSITE_DIRECTION: Direction = (ENTRY_DIRECTION as Direction) === 'PUT' ? 'CALL' : 'PUT';
+
+const RESULT_STYLE: Record<string, string> = {
+  WIN: 'bg-emerald-700 text-emerald-100',
+  LOSS: 'bg-rose-700 text-rose-100',
+  DOJI: 'bg-slate-700 text-slate-200',
+};
 
 export interface AssetTally {
   wins: number;
@@ -17,6 +24,8 @@ export type AutoAnalysisState =
       status: 'done';
       overall: AssetTally;
       perAsset: Record<number, AssetTally>;
+      /** Ocorrencias cruas por ativo — usadas so pra mostrar o padrao de velas de cada entrada ao expandir um ativo no ranking. */
+      occurrencesByAsset: Record<number, PatternOccurrence[]>;
       assets: AssetInfo[];
       failedCount: number;
       elapsedMs: number;
@@ -49,12 +58,49 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
 
+/** Uma ocorrencia: as velas do padrao (bolinhas G/R) + a vela de entrada + o resultado real. */
+function OccurrencePattern({ occurrence }: { occurrence: PatternOccurrence }) {
+  const when = new Date(occurrence.occurredAt * 1000).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const entryColor = occurrence.candle13 ? candleColor(occurrence.candle13) : null;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-xs">
+      <span className="text-slate-500 w-24 shrink-0">{when}</span>
+      <div className="flex gap-0.5">
+        {occurrence.candles.map((c, i) => (
+          <span
+            key={i}
+            className={`h-4 w-4 rounded-full ${candleColor(c) === 'G' ? 'bg-emerald-600' : candleColor(c) === 'R' ? 'bg-rose-600' : 'bg-slate-500'}`}
+            title={candleColor(c)}
+          />
+        ))}
+        {entryColor && (
+          <span
+            className={`h-4 w-4 rounded-full ring-2 ring-sky-400 ${entryColor === 'G' ? 'bg-emerald-600' : entryColor === 'R' ? 'bg-rose-600' : 'bg-slate-500'}`}
+            title={`Entrada (${entryColor})`}
+          />
+        )}
+      </div>
+      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${RESULT_STYLE[occurrence.result ?? ''] ?? 'bg-slate-800 text-slate-400'}`}>
+        {occurrence.result ?? 'sem dado'}
+      </span>
+    </div>
+  );
+}
+
 /**
  * Consolidado (nao dia-a-dia) da estrategia 12 Candles sobre todos os ativos OTC digital
  * disponiveis, na janela configurada em Settings.analysisDays — disparado pelo botao em
  * MonitorPage.
  */
 export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
+  const [expandedAssetId, setExpandedAssetId] = useState<number | null>(null);
+
   if (state.status === 'idle') return null;
 
   if (state.status === 'loading') {
@@ -97,7 +143,7 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
     );
   }
 
-  const { overall, perAsset, assets, failedCount, elapsedMs, days, reentry } = state;
+  const { overall, perAsset, occurrencesByAsset, assets, failedCount, elapsedMs, days, reentry } = state;
   const nameOf = (id: number) => assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   const overallRate = winRate(overall);
 
@@ -147,19 +193,41 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
         <div className="text-sm text-slate-500">Nenhum sinal do padrão 12 Candles nos últimos {days} dias.</div>
       ) : (
         <div>
-          <div className="text-xs text-slate-500 mb-2">Melhores ativos ({ranked.length} com sinal no período)</div>
+          <div className="text-xs text-slate-500 mb-2">
+            Melhores ativos ({ranked.length} com sinal no período) — toque para ver o padrão de cada entrada
+          </div>
           <div className="space-y-1">
-            {ranked.map((a) => (
-              <div key={a.id} className="flex items-center justify-between gap-2 text-sm bg-slate-950/40 rounded-lg px-3 py-1.5">
-                <span className="truncate">{nameOf(a.id)}</span>
-                <span className="flex items-center gap-3 text-xs shrink-0">
-                  <span className="text-emerald-400">{a.wins}W</span>
-                  <span className="text-rose-400">{a.losses}L</span>
-                  {a.dojis > 0 && <span className="text-slate-400">{a.dojis}D</span>}
-                  <span className="font-semibold text-white w-14 text-right">{formatPct(a.rate)}</span>
-                </span>
-              </div>
-            ))}
+            {ranked.map((a) => {
+              const isExpanded = expandedAssetId === a.id;
+              const occurrences = occurrencesByAsset[a.id] ?? [];
+              return (
+                <div key={a.id} className="bg-slate-950/40 rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedAssetId(isExpanded ? null : a.id)}
+                    className="w-full flex items-center justify-between gap-2 text-sm px-3 py-1.5 hover:bg-slate-900/60"
+                  >
+                    <span className="truncate">{nameOf(a.id)}</span>
+                    <span className="flex items-center gap-3 text-xs shrink-0">
+                      <span className="text-emerald-400">{a.wins}W</span>
+                      <span className="text-rose-400">{a.losses}L</span>
+                      {a.dojis > 0 && <span className="text-slate-400">{a.dojis}D</span>}
+                      <span className="font-semibold text-white w-14 text-right">{formatPct(a.rate)}</span>
+                      <span className="text-slate-500">{isExpanded ? '▲' : '▼'}</span>
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <div className="border-t border-slate-800 px-3 py-2 space-y-2">
+                      {occurrences.length === 0 ? (
+                        <div className="text-xs text-slate-500">Detalhe indisponível para este ativo.</div>
+                      ) : (
+                        occurrences.map((occ) => <OccurrencePattern key={occ.id} occurrence={occ} />)
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

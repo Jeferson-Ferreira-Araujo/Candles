@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import type { AppEvent, AssetInfo, Settings } from '@polarium12c/shared';
+import type { AppEvent, AssetInfo, PatternOccurrence, Settings } from '@polarium12c/shared';
 import { ENTRY_DIRECTION, PATTERN_LENGTH, TWELVE_CANDLES_PATTERN } from '@polarium12c/shared';
 
 const LAST_PATTERN_COLOR = TWELVE_CANDLES_PATTERN[PATTERN_LENGTH - 1];
@@ -101,6 +101,9 @@ export function MonitorPage() {
 
     const overall: AssetTally = { wins: 0, losses: 0, dojis: 0 };
     const perAsset: Record<number, AssetTally> = {};
+    // Guardado para poder mostrar, por ativo, qual foi o padrao de velas de cada ocorrencia
+    // (ex.: "quais entradas formaram os 5 wins seguidos"), nao so o placar agregado.
+    const occurrencesByAsset: Record<number, PatternOccurrence[]> = {};
     let failedCount = 0;
     let completed = 0;
     // Gale 1 e sempre calculado (nao depende de nenhuma configuracao) para comparar direto
@@ -117,9 +120,10 @@ export function MonitorPage() {
       while (nextIndex < allAssets.length) {
         const asset = allAssets[nextIndex++]!;
         try {
-          const { summary } = await api.runBacktest([asset.id], days);
+          const { summary, occurrences } = await api.runBacktest([asset.id], days);
           const t = summary.perAsset[asset.id] ?? summary.allOccurrences;
           perAsset[asset.id] = t;
+          occurrencesByAsset[asset.id] = occurrences;
           overall.wins += t.wins;
           overall.losses += t.losses;
           overall.dojis += t.dojis;
@@ -154,6 +158,7 @@ export function MonitorPage() {
       status: 'done',
       overall,
       perAsset,
+      occurrencesByAsset,
       assets: allAssets,
       failedCount,
       elapsedMs: Date.now() - startedAt,
