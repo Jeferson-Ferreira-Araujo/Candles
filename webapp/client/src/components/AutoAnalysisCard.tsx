@@ -98,7 +98,13 @@ function OccurrencePattern({ occurrence }: { occurrence: PatternOccurrence }) {
  * disponiveis, na janela configurada em Settings.analysisDays — disparado pelo botao em
  * MonitorPage.
  */
-export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
+interface AutoAnalysisCardProps {
+  state: AutoAnalysisState;
+  /** Reroda a mesma analise restrita a um unico ativo — usado pelo botao dentro do detalhe expandido. */
+  onAnalyzeSingleAsset?: (asset: AssetInfo) => void;
+}
+
+export function AutoAnalysisCard({ state, onAnalyzeSingleAsset }: AutoAnalysisCardProps) {
   const [expandedAssetId, setExpandedAssetId] = useState<number | null>(null);
 
   if (state.status === 'idle') return null;
@@ -218,6 +224,18 @@ export function AutoAnalysisCard({ state }: { state: AutoAnalysisState }) {
                   </button>
                   {isExpanded && (
                     <div className="border-t border-slate-800 px-3 py-2 space-y-2">
+                      {onAnalyzeSingleAsset && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const asset = assets.find((x) => x.id === a.id);
+                            if (asset) onAnalyzeSingleAsset(asset);
+                          }}
+                          className="text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-950/60 px-2 py-1"
+                        >
+                          🔁 Rodar só este ativo de novo
+                        </button>
+                      )}
                       {occurrences.length === 0 ? (
                         <div className="text-xs text-slate-500">Detalhe indisponível para este ativo.</div>
                       ) : (

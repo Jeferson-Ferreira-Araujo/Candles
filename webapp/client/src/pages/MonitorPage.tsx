@@ -6,6 +6,7 @@ import { ENTRY_DIRECTION, PATTERN_LENGTH, TWELVE_CANDLES_PATTERN } from '@polari
 const LAST_PATTERN_COLOR = TWELVE_CANDLES_PATTERN[PATTERN_LENGTH - 1];
 const LAST_COLOR_LABEL = LAST_PATTERN_COLOR === 'G' ? 'verde' : 'vermelha';
 import { PatternCard } from '../components/PatternCard.js';
+import { AssetPicker } from '../components/AssetPicker.js';
 import { AutoAnalysisCard, type AssetTally, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { usePatternProgress } from '../hooks/usePatternProgress.js';
 import { api } from '../api.js';
@@ -49,6 +50,7 @@ export function MonitorPage() {
   const progressByActive = usePatternProgress(events);
   const activeIds = settings?.selectedActiveIds ?? [];
   const [assets, setAssets] = useState<AssetInfo[]>([]);
+  const [pickedAssetIds, setPickedAssetIds] = useState<number[]>([]);
   const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisState>({ status: 'idle' });
   const analysisStartedAt = useRef<number | null>(null);
 
@@ -80,9 +82,12 @@ export function MonitorPage() {
   // sequencial puro levava minutos com dezenas/centenas de ativos OTC digital (cada um e uma
   // chamada de rede real a corretora + gravacao no banco). Erro em um ativo isolado (ex.:
   // ativo invalido) nao aborta os demais, so e contado e ignorado no resultado final.
-  async function runAutoAnalysis() {
+  //
+  // `assetsOverride` permite reaproveitar exatamente essa mesma logica/formato pra analisar
+  // so um ativo especifico (botao "Rodar só este ativo" no ranking), sem duplicar o fluxo.
+  async function runAutoAnalysis(assetsOverride?: AssetInfo[]) {
     const days = settings?.analysisDays ?? DEFAULT_ANALYSIS_DAYS;
-    const allAssets = await api.getAssets().catch(() => [] as AssetInfo[]);
+    const allAssets = assetsOverride ?? (await api.getAssets().catch(() => [] as AssetInfo[]));
     if (allAssets.length === 0) {
       setAutoAnalysis({ status: 'empty' });
       return;
@@ -186,7 +191,7 @@ export function MonitorPage() {
           </p>
         </div>
         <button
-          onClick={runAutoAnalysis}
+          onClick={() => runAutoAnalysis()}
           disabled={autoAnalysis.status === 'loading'}
           className="rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold shrink-0"
         >
@@ -194,7 +199,28 @@ export function MonitorPage() {
         </button>
       </div>
 
-      <AutoAnalysisCard state={autoAnalysis} />
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-3">
+        <div>
+          <div className="font-semibold text-sm">Analisar ativos específicos</div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Rode a mesma análise (consolidado + Gale 1) só para os ativos que você escolher, sem esperar todos os
+            outros.
+          </p>
+        </div>
+        <AssetPicker value={pickedAssetIds} onChange={setPickedAssetIds} />
+        <button
+          onClick={() => {
+            const picked = assets.filter((a) => pickedAssetIds.includes(a.id));
+            if (picked.length > 0) runAutoAnalysis(picked);
+          }}
+          disabled={pickedAssetIds.length === 0 || autoAnalysis.status === 'loading'}
+          className="rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
+        >
+          Analisar selecionados ({pickedAssetIds.length})
+        </button>
+      </div>
+
+      <AutoAnalysisCard state={autoAnalysis} onAnalyzeSingleAsset={(asset) => runAutoAnalysis([asset])} />
 
       <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 flex items-center gap-4 sm:gap-6 flex-wrap">
         <div className="flex items-center gap-2 text-emerald-300 font-semibold">
