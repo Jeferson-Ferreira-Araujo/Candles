@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AssetInfo, CandleColor, CustomPattern } from '@polarium12c/shared';
 import { entryDirectionOf } from '@polarium12c/shared';
 import { api } from '../api.js';
-import { AssetPicker } from '../components/AssetPicker.js';
+import { AssetBadgePicker } from '../components/AssetBadgePicker.js';
 import { AutoAnalysisCard, type AutoAnalysisState } from '../components/AutoAnalysisCard.js';
 import { runAutoAnalysisScan } from '../lib/autoAnalysis.js';
 
@@ -241,9 +241,7 @@ export function PatternBuilderPage() {
             />
             Testar todos os ativos OTC digital
           </label>
-          {!testAllAssets && (
-            <AssetPicker value={selectedAssetIds} onChange={setSelectedAssetIds} placeholder="Buscar ativo para testar..." />
-          )}
+          {!testAllAssets && <AssetBadgePicker assets={assets} value={selectedAssetIds} onChange={setSelectedAssetIds} />}
           {analysisError && <div className="text-xs text-rose-400">{analysisError}</div>}
         </div>
 
