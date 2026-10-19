@@ -1,15 +1,34 @@
-// Tem que vir ANTES do import do playwright: ele precisa instalar o Chromium dentro de
-// node_modules (que faz parte do que o Render publica), nao no cache global (~/.cache), que
-// fica no build mas some no runtime — foi exatamente o erro visto em producao ("Executable
-// doesn't exist at /opt/render/.cache/..."). O build (package.json) ja instala com essa
-// mesma flag; aqui garantimos que o launch() procure no MESMO lugar.
-process.env.PLAYWRIGHT_BROWSERS_PATH = '0';
-
+// PLAYWRIGHT_BROWSERS_PATH=0 (instala o Chromium dentro de node_modules, que o Render publica,
+// em vez do cache global ~/.cache, que existe no build mas some no runtime) tem que vir do
+// AMBIENTE do processo, setado antes do Node sequer iniciar — ver os scripts "build" e "start"
+// em package.json. Setar via process.env aqui dentro NAO funciona: imports ES sao avaliados
+// antes de qualquer codigo deste arquivo rodar, entao o playwright ja resolve o caminho padrao
+// antes dessa linha executar (foi exatamente o bug visto em producao).
+import { execSync } from 'node:child_process';
 import { chromium } from 'playwright';
 
 const LOGIN_URL = 'https://trade.polariumbroker.com/en/login';
 const NAV_TIMEOUT_MS = 30_000;
 const SSID_WAIT_TIMEOUT_MS = 20_000;
+
+let browserInstallChecked = false;
+
+// Autocura: se o navegador nao foi baixado no passo de build (por qualquer motivo — cache
+// de deploy, ordem dos passos, etc.), instala agora mesmo, na hora do primeiro login. So
+// tenta uma vez por processo (o resultado fica em cache em disco pelo proprio playwright).
+async function ensureBrowserInstalled(): Promise<void> {
+  if (browserInstallChecked) return;
+  browserInstallChecked = true;
+  try {
+    const probe = await chromium.launch({ headless: true });
+    await probe.close();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("Executable doesn't exist")) throw err;
+    console.error('[auth] Chromium nao encontrado no servidor — instalando agora (pode levar ~1min)...');
+    execSync('npx playwright install chromium', { stdio: 'inherit' });
+  }
+}
 
 /**
  * Faz o login de verdade na tela oficial da Polarium num Chromium headless e intercepta o
@@ -19,6 +38,7 @@ const SSID_WAIT_TIMEOUT_MS = 20_000;
  * nenhum (ela so existe na memoria deste processo, pelo tempo do login).
  */
 export async function loginWithCredentials(email: string, password: string): Promise<string> {
+  await ensureBrowserInstalled();
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
