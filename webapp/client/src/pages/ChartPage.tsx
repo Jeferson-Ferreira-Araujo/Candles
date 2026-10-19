@@ -12,15 +12,6 @@ function formatPct(p: number): string {
   return `${(p * 100).toFixed(1)}%`;
 }
 
-/** Substitui o ultimo candle se for do mesmo periodo (`from` igual — vela em formacao ou recem-fechada), senao acrescenta. */
-function mergeCandle(prev: Candle[], candle: Candle): Candle[] {
-  const next = [...prev];
-  const last = next[next.length - 1];
-  if (last && last.from === candle.from) next[next.length - 1] = candle;
-  else next.push(candle);
-  return next;
-}
-
 /**
  * Tela "Gráfico", no estilo das corretoras: escolhe um ativo, carrega o candlestick real
  * (histórico) e o servidor passa a transmitir esse ativo ao vivo (POST /api/chart-stream) —
@@ -37,6 +28,7 @@ export function ChartPage() {
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [watchingAssetId, setWatchingAssetId] = useState<number | null>(null);
+  const [liveCandle, setLiveCandle] = useState<Candle | null>(null);
   const [best, setBest] = useState<BestStrategyResult | null | 'loading'>(null);
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
@@ -54,20 +46,20 @@ export function ChartPage() {
     };
   }, []);
 
-  // Vela recem-fechada do ativo sendo transmitido.
+  // Vela recem-fechada do ativo sendo transmitido — vira a "ponta ao vivo" do grafico, sem
+  // nunca reconstruir o array historico inteiro (ver CandleChart: so a ultima barra muda).
   useEffect(() => {
     const last = events[0];
     if (!last || last.type !== 'CANDLE_CLOSED' || last.activeId !== watchingAssetIdRef.current) return;
     const candle = (last.payload as { candle?: Candle }).candle;
-    if (!candle) return;
-    setCandles((prev) => mergeCandle(prev, candle));
+    if (candle) setLiveCandle(candle);
   }, [events]);
 
   // Tick da vela AINDA EM FORMACAO (CANDLE_UPDATED) — e o que faz o grafico "se mexer" em
   // tempo real dentro do minuto, nao so quando uma vela fecha.
   useEffect(() => {
     if (!lastCandleUpdate || lastCandleUpdate.activeId !== watchingAssetIdRef.current) return;
-    setCandles((prev) => mergeCandle(prev, lastCandleUpdate.candle));
+    setLiveCandle(lastCandleUpdate.candle);
   }, [lastCandleUpdate]);
 
   const isLive = lastCandleUpdate !== null && lastCandleUpdate.activeId === watchingAssetId;
@@ -84,6 +76,7 @@ export function ChartPage() {
     setChartError(null);
     setLoadingChart(true);
     setBest('loading');
+    setLiveCandle(null);
     try {
       const [data] = await Promise.all([api.getCandles(selectedAssetId, days), api.watchChartAsset(selectedAssetId)]);
       setCandles(data);
@@ -185,7 +178,7 @@ export function ChartPage() {
                 </span>
               ))}
           </div>
-          <CandleChart candles={candles} markers={markers} />
+          <CandleChart candles={candles} liveCandle={liveCandle} markers={markers} />
         </div>
       )}
     </div>

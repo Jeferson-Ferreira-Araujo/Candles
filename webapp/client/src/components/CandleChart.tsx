@@ -23,7 +23,10 @@ export interface ChartMarker {
 }
 
 interface Props {
+  /** Historico carregado — so deve mudar quando o usuario troca de ativo/periodo e recarrega. */
   candles: Candle[];
+  /** Tick mais recente (fechado ou ainda em formacao) — atualiza so a ultima vela, sem resetar zoom/posicao. */
+  liveCandle?: Candle | null;
   markers?: ChartMarker[];
   height?: number;
 }
@@ -32,8 +35,14 @@ function toCandlestickData(c: Candle): CandlestickData<Time> {
   return { time: c.from as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close };
 }
 
-/** Grafico de candlestick real (historico + pode ser atualizado ao vivo via props) usando lightweight-charts. */
-export function CandleChart({ candles, markers, height = 360 }: Props) {
+/**
+ * Grafico de candlestick real usando lightweight-charts. `candles` (o historico) so e
+ * redesenhado do zero quando o ARRAY muda de referencia (ou seja, quando a tela troca de
+ * ativo/periodo e busca um novo historico) — cada tick ao vivo chega via `liveCandle` e usa
+ * `series.update()`, que atualiza so a ultima barra sem re-ajustar o zoom nem recentralizar o
+ * grafico, deixando o usuario livre pra rolar/dar zoom sem ser "puxado de volta" a cada tick.
+ */
+export function CandleChart({ candles, liveCandle, markers, height = 360 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -45,7 +54,7 @@ export function CandleChart({ candles, markers, height = 360 }: Props) {
       height,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#334155' },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#334155', rightOffset: 5 },
       rightPriceScale: { borderColor: '#334155' },
       crosshair: { mode: 0 },
     });
@@ -78,11 +87,22 @@ export function CandleChart({ candles, markers, height = 360 }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Carga do historico: redesenha tudo e so ENTAO ajusta a visao, mostrando a ponta mais
+  // recente (horario atual) a direita — acontece so quando `candles` muda de referencia
+  // (novo carregamento), nunca a cada tick.
   useEffect(() => {
     if (!seriesRef.current) return;
     seriesRef.current.setData(candles.map(toCandlestickData));
-    chartRef.current?.timeScale().fitContent();
+    chartRef.current?.timeScale().scrollToRealTime();
   }, [candles]);
+
+  // Tick ao vivo: atualiza so a ultima barra (ou acrescenta uma nova, se for um periodo novo)
+  // sem nunca re-ajustar o zoom — e assim que lightweight-charts recomenda refletir dados ao
+  // vivo sem "puxar" o grafico de volta toda hora.
+  useEffect(() => {
+    if (!seriesRef.current || !liveCandle) return;
+    seriesRef.current.update(toCandlestickData(liveCandle));
+  }, [liveCandle]);
 
   useEffect(() => {
     if (!markersPluginRef.current) return;
