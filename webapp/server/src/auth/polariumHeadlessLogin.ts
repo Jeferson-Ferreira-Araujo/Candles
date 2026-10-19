@@ -1,3 +1,10 @@
+// Tem que vir ANTES do import do playwright: ele precisa instalar o Chromium dentro de
+// node_modules (que faz parte do que o Render publica), nao no cache global (~/.cache), que
+// fica no build mas some no runtime — foi exatamente o erro visto em producao ("Executable
+// doesn't exist at /opt/render/.cache/..."). O build (package.json) ja instala com essa
+// mesma flag; aqui garantimos que o launch() procure no MESMO lugar.
+process.env.PLAYWRIGHT_BROWSERS_PATH = '0';
+
 import { chromium } from 'playwright';
 
 const LOGIN_URL = 'https://trade.polariumbroker.com/en/login';

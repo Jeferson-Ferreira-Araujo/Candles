@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').copyFileSync('src/db/schema.sql','dist/db/schema.sql')\" && npx playwright install chromium",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').copyFileSync('src/db/schema.sql','dist/db/schema.sql')\" && cross-env PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -22,6 +22,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
