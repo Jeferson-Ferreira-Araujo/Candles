@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
 import {
   CandlestickSeries,
   ColorType,
@@ -31,6 +31,11 @@ interface Props {
   height?: number;
 }
 
+export interface CandleChartHandle {
+  /** Rola ate a ponta mais recente (agora) — usado pelo botao "Ir para agora". */
+  goToRealTime: () => void;
+}
+
 function toCandlestickData(c: Candle): CandlestickData<Time> {
   return { time: c.from as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close };
 }
@@ -39,10 +44,12 @@ function toCandlestickData(c: Candle): CandlestickData<Time> {
  * Grafico de candlestick real usando lightweight-charts. `candles` (o historico) so e
  * redesenhado do zero quando o ARRAY muda de referencia (ou seja, quando a tela troca de
  * ativo/periodo e busca um novo historico) — cada tick ao vivo chega via `liveCandle` e usa
- * `series.update()`, que atualiza so a ultima barra sem re-ajustar o zoom nem recentralizar o
- * grafico, deixando o usuario livre pra rolar/dar zoom sem ser "puxado de volta" a cada tick.
+ * `series.update()`, que atualiza so a ultima barra. `shiftVisibleRangeOnNewBar` e desligado
+ * de proposito: por padrao a lib tenta "seguir" o preco e rolar a visao sozinha a cada tick
+ * novo, o que brigava com o usuario tentando arrastar manualmente pra ver outra parte do
+ * grafico — agora a visao SO muda quando o usuario mexe nela ou aperta "Ir para agora".
  */
-export function CandleChart({ candles, liveCandle, markers, height = 360 }: Props) {
+export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleChart({ candles, liveCandle, markers, height = 360 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -54,7 +61,13 @@ export function CandleChart({ candles, liveCandle, markers, height = 360 }: Prop
       height,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#334155', rightOffset: 5 },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        borderColor: '#334155',
+        rightOffset: 5,
+        shiftVisibleRangeOnNewBar: false, // nunca rola sozinho quando um tick novo chega — so por acao do usuario
+      },
       rightPriceScale: { borderColor: '#334155' },
       crosshair: { mode: 0 },
     });
@@ -116,5 +129,9 @@ export function CandleChart({ candles, liveCandle, markers, height = 360 }: Prop
     markersPluginRef.current.setMarkers(seriesMarkers);
   }, [markers]);
 
+  useImperativeHandle(ref, () => ({
+    goToRealTime: () => chartRef.current?.timeScale().scrollToRealTime(),
+  }));
+
   return <div ref={containerRef} className="w-full" />;
-}
+});

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AssetInfo, Candle } from '@polarium12c/shared';
 import { api } from '../api.js';
 import { AssetBadgePicker } from '../components/AssetBadgePicker.js';
-import { CandleChart, type ChartMarker } from '../components/CandleChart.js';
+import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
 import { findBestStrategy, type BestStrategyResult } from '../lib/bestStrategyFinder.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
@@ -33,6 +33,7 @@ export function ChartPage() {
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
+  const chartRef = useRef<CandleChartHandle>(null);
 
   useEffect(() => {
     api.getAssets().then(setAssets).catch(() => {});
@@ -177,8 +178,15 @@ export function ChartPage() {
                   <span className="h-2 w-2 rounded-full bg-slate-600" /> aguardando o próximo tick...
                 </span>
               ))}
+            <button
+              type="button"
+              onClick={() => chartRef.current?.goToRealTime()}
+              className="ml-auto text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2 py-1"
+            >
+              ⏭ Ir para agora
+            </button>
           </div>
-          <CandleChart candles={candles} liveCandle={liveCandle} markers={markers} />
+          <CandleChart ref={chartRef} candles={candles} liveCandle={liveCandle} markers={markers} />
         </div>
       )}
     </div>
