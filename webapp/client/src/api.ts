@@ -134,4 +134,13 @@ export const api = {
 
   getCandles: (activeId: number, days: number) =>
     req(`/api/candles?activeId=${activeId}&days=${days}`).then((r) => json<Candle[]>(r)),
+
+  watchChartAsset: (activeId: number) =>
+    req('/api/chart-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeId }),
+    }).then((r) => json<{ ok: true }>(r)),
+
+  unwatchChartAsset: () => req('/api/chart-stream', { method: 'DELETE' }).then((r) => json<{ ok: true }>(r)),
 };

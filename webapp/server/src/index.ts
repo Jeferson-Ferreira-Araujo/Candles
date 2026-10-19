@@ -115,6 +115,7 @@ app.post('/api/auth/logout', async (req, res) => {
   if (brokerManager.requiresLogin) {
     liveMonitor?.stop();
     liveMonitor = null;
+    await stopChartStream();
     await brokerManager.logout();
   }
   res.json({ ok: true });
@@ -317,6 +318,63 @@ app.get('/api/candles', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+/**
+ * Stream de candles so pra visualizacao (tela Gráfico) — INDEPENDENTE do monitor de padroes
+ * (LiveMonitorService): nao exige que o ativo esteja em Settings.selectedActiveIds nem que
+ * exista um padrao ativo, so pra poder abrir o grafico de qualquer ativo e ver as velas se
+ * mexendo. So mantem 1 assinatura por vez (app de usuario unico) — pedir um novo activeId
+ * cancela a anterior. Nunca persiste nada (mesma logica de CANDLE_UPDATED do monitor: sem
+ * valor de auditoria), so transmite via WebSocket.
+ */
+let chartStreamUnsubscribe: (() => void) | null = null;
+let chartStreamActiveId: number | null = null;
+
+async function stopChartStream(): Promise<void> {
+  if (chartStreamUnsubscribe) {
+    try {
+      await chartStreamUnsubscribe();
+    } catch (err) {
+      console.error('[chart] falha ao cancelar stream (ignorada):', err);
+    }
+  }
+  chartStreamUnsubscribe = null;
+  chartStreamActiveId = null;
+}
+
+app.post('/api/chart-stream', async (req, res) => {
+  const { activeId } = req.body as { activeId?: number };
+  if (!Number.isFinite(activeId)) {
+    res.status(400).json({ error: 'Informe activeId.' });
+    return;
+  }
+  if (chartStreamActiveId === activeId) {
+    res.json({ ok: true });
+    return;
+  }
+  try {
+    await stopChartStream();
+    const unsubscribe = await brokerManager.get().subscribeCandles(activeId!, CANDLE_SIZE_M1, (candle) => {
+      broadcastRaw('APP_EVENT', {
+        id: randomUUID(),
+        type: candle.isClosed ? 'CANDLE_CLOSED' : 'CANDLE_UPDATED',
+        activeId,
+        payload: { candle },
+        createdAt: Date.now(),
+      });
+    });
+    chartStreamUnsubscribe = unsubscribe;
+    chartStreamActiveId = activeId!;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/chart-stream', async (_req, res) => {
+  await stopChartStream();
+  res.json({ ok: true });
 });
 
 const httpServer = createServer(app);
