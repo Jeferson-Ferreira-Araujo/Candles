@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import type { AppEvent, AssetInfo, Direction } from '@polarium12c/shared';
+import { CANDLE_SIZE_M1 } from '@polarium12c/shared';
 import { confirmPrefix, entryDirectionOf, validatePatternCandles } from '@polarium12c/shared';
 import { openDb } from './db/db.js';
 import {
@@ -294,6 +295,25 @@ app.get('/api/assets', async (_req, res) => {
       assetsCache = { at: Date.now(), data };
     }
     res.json(assetsCache!.data);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get('/api/candles', async (req, res) => {
+  const activeId = Number(req.query.activeId);
+  const days = Number(req.query.days ?? 7);
+  if (!Number.isFinite(activeId) || !Number.isFinite(days) || days <= 0) {
+    res.status(400).json({ error: 'Informe activeId e days (numero positivo) como query params.' });
+    return;
+  }
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - days * 24 * 60 * 60;
+    const candles = (await brokerManager.get().getHistoricalCandles(activeId, CANDLE_SIZE_M1, from, now))
+      .filter((c) => c.isClosed)
+      .sort((a, b) => a.from - b.from);
+    res.json(candles);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

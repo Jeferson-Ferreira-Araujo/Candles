@@ -1,6 +1,7 @@
 import type {
   AssetInfo,
   BacktestSummary,
+  Candle,
   ClassicStrategyId,
   ClassicStrategyResult,
   CustomPattern,
@@ -130,4 +131,7 @@ export const api = {
   getOrders: (limit = 200) => req(`/api/orders?limit=${limit}`).then((r) => json<OrderRecord[]>(r)),
 
   getAssets: () => req('/api/assets').then((r) => json<AssetInfo[]>(r)),
+
+  getCandles: (activeId: number, days: number) =>
+    req(`/api/candles?activeId=${activeId}&days=${days}`).then((r) => json<Candle[]>(r)),
 };
