@@ -1,0 +1,62 @@
+# Deploy no VPS (fora do Coolify, mesmo padrao de /opt/hermes-api e /opt/mural): usa a
+# rede "coolify" existente so pra o Traefik que ja roda la (coolify-proxy) enxergar e
+# rotear estes containers. Nao depende do Coolify em si, so do proxy compartilhado.
+#
+# Frontend e backend ficam na MESMA origem (ob.jefersonaraujo.com.br): o Traefik manda
+# /api e /ws pro backend (prioridade mais alta) e tudo o mais pro frontend estatico.
+services:
+  candles12-server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: candles12-server
+    restart: unless-stopped
+    networks: [coolify]
+    env_file: [.env.production]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: coolify
+
+      traefik.http.routers.candles12-api-http.rule: Host(`ob.jefersonaraujo.com.br`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))
+      traefik.http.routers.candles12-api-http.entryPoints: http
+      traefik.http.routers.candles12-api-http.middlewares: candles12-redir
+      traefik.http.routers.candles12-api-http.priority: "20"
+
+      traefik.http.routers.candles12-api.rule: Host(`ob.jefersonaraujo.com.br`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))
+      traefik.http.routers.candles12-api.entryPoints: https
+      traefik.http.routers.candles12-api.tls: "true"
+      traefik.http.routers.candles12-api.tls.certresolver: letsencrypt
+      traefik.http.routers.candles12-api.priority: "20"
+      traefik.http.routers.candles12-api.service: candles12-api-svc
+
+      traefik.http.services.candles12-api-svc.loadbalancer.server.port: "4000"
+      traefik.http.middlewares.candles12-redir.redirectscheme.scheme: https
+
+  candles12-client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    container_name: candles12-client
+    restart: unless-stopped
+    networks: [coolify]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: coolify
+
+      traefik.http.routers.candles12-web-http.rule: Host(`ob.jefersonaraujo.com.br`)
+      traefik.http.routers.candles12-web-http.entryPoints: http
+      traefik.http.routers.candles12-web-http.middlewares: candles12-redir
+      traefik.http.routers.candles12-web-http.priority: "1"
+
+      traefik.http.routers.candles12-web.rule: Host(`ob.jefersonaraujo.com.br`)
+      traefik.http.routers.candles12-web.entryPoints: https
+      traefik.http.routers.candles12-web.tls: "true"
+      traefik.http.routers.candles12-web.tls.certresolver: letsencrypt
+      traefik.http.routers.candles12-web.priority: "1"
+      traefik.http.routers.candles12-web.service: candles12-web-svc
+
+      traefik.http.services.candles12-web-svc.loadbalancer.server.port: "80"
+
+networks:
+  coolify:
+    external: true
