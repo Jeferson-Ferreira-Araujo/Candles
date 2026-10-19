@@ -6,11 +6,14 @@ FROM mcr.microsoft.com/playwright:v1.64.1-jammy
 WORKDIR /app
 
 # So os manifestos primeiro, pra cachear a camada do `npm ci` entre builds quando so o
-# codigo muda (sem precisar reinstalar node_modules toda vez).
+# codigo muda (sem precisar reinstalar node_modules toda vez). --ignore-scripts pula o
+# "postinstall" da raiz (que builda o shared) -- nesse ponto so os manifestos existem,
+# ainda nao o codigo-fonte; o build de verdade roda explicitamente mais abaixo, depois que
+# o codigo inteiro ja foi copiado.
 COPY package.json package-lock.json ./
 COPY shared/package.json shared/package.json
 COPY server/package.json server/package.json
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 COPY shared ./shared
 COPY server ./server

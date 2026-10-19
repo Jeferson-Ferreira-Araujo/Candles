@@ -4,7 +4,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY shared/package.json shared/package.json
 COPY client/package.json client/package.json
-RUN npm ci
+# --ignore-scripts pula o "postinstall" da raiz (builda o shared) -- o codigo-fonte ainda
+# nao foi copiado nesse ponto; o build de verdade roda explicitamente mais abaixo.
+RUN npm ci --ignore-scripts
 
 COPY shared ./shared
 COPY client ./client
