@@ -165,6 +165,8 @@ export interface DailyResult {
 
 export type EventType =
   | 'CANDLE_CLOSED'
+  /** Tick da vela ainda em formacao (isClosed=false) — so pra UI ao vivo (ex.: grafico), nunca persistido nem usado pelo motor de padrao. */
+  | 'CANDLE_UPDATED'
   | 'PATTERN_PROGRESS'
   | 'PATTERN_CONFIRMED'
   | 'PATTERN_INVALIDATED'

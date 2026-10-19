@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppEvent } from '@polarium12c/shared';
+import type { AppEvent, Candle } from '@polarium12c/shared';
 
 export interface LiveSocketState {
   connected: boolean;
   events: AppEvent[];
+  /** Ultimo tick de vela em formacao recebido (ver CANDLE_UPDATED) — fica de fora do ring buffer
+   * `events` de proposito, ja que chega varias vezes por minuto e nao e um "evento de negocio"
+   * (sinais, ordens, resultados) como os demais; so serve pra UI ao vivo tipo o grafico. */
+  lastCandleUpdate: { activeId: number; candle: Candle } | null;
 }
 
 const MAX_EVENTS = 200;
@@ -12,6 +16,7 @@ const MAX_EVENTS = 200;
 export function useLiveSocket(): LiveSocketState {
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<AppEvent[]>([]);
+  const [lastCandleUpdate, setLastCandleUpdate] = useState<{ activeId: number; candle: Candle } | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -32,9 +37,16 @@ export function useLiveSocket(): LiveSocketState {
     socket.onmessage = (msg) => {
       try {
         const data = JSON.parse(msg.data) as { type: string; payload: unknown };
-        if (data.type === 'APP_EVENT') {
-          setEvents((prev) => [data.payload as AppEvent, ...prev].slice(0, MAX_EVENTS));
+        if (data.type !== 'APP_EVENT') return;
+        const event = data.payload as AppEvent;
+
+        if (event.type === 'CANDLE_UPDATED') {
+          const candle = (event.payload as { candle?: Candle }).candle;
+          if (candle && event.activeId !== undefined) setLastCandleUpdate({ activeId: event.activeId, candle });
+          return;
         }
+
+        setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS));
       } catch {
         // mensagem nao reconhecida - ignora silenciosamente, nao e critico para a UI
       }
@@ -43,5 +55,5 @@ export function useLiveSocket(): LiveSocketState {
     return () => socket.close();
   }, []);
 
-  return { connected, events };
+  return { connected, events, lastCandleUpdate };
 }

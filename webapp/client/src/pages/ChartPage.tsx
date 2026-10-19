@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AssetInfo, Candle } from '@polarium12c/shared';
+import { useOutletContext } from 'react-router-dom';
+import type { AssetInfo, Candle, Settings } from '@polarium12c/shared';
 import { api } from '../api.js';
 import { AssetBadgePicker } from '../components/AssetBadgePicker.js';
 import { CandleChart, type ChartMarker } from '../components/CandleChart.js';
@@ -8,8 +9,21 @@ import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
 const DEFAULT_DAYS = 3;
 
+interface OutletCtx {
+  settings: Settings | null;
+}
+
 function formatPct(p: number): string {
   return `${(p * 100).toFixed(1)}%`;
+}
+
+/** Substitui o ultimo candle se for do mesmo periodo (`from` igual — vela em formacao ou recem-fechada), senao acrescenta. */
+function mergeCandle(prev: Candle[], candle: Candle): Candle[] {
+  const next = [...prev];
+  const last = next[next.length - 1];
+  if (last && last.from === candle.from) next[next.length - 1] = candle;
+  else next.push(candle);
+  return next;
 }
 
 /**
@@ -19,6 +33,7 @@ function formatPct(p: number): string {
  * customizado ativo) para esse ativo no período escolhido.
  */
 export function ChartPage() {
+  const { settings } = useOutletContext<OutletCtx>();
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [days, setDays] = useState(DEFAULT_DAYS);
@@ -26,7 +41,7 @@ export function ChartPage() {
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [best, setBest] = useState<BestStrategyResult | null | 'loading'>(null);
-  const { events } = useLiveSocket();
+  const { events, lastCandleUpdate } = useLiveSocket();
   const selectedAssetIdRef = useRef<number | null>(null);
   selectedAssetIdRef.current = selectedAssetId;
 
@@ -34,21 +49,24 @@ export function ChartPage() {
     api.getAssets().then(setAssets).catch(() => {});
   }, []);
 
-  // Atualizacao ao vivo: se o ativo escolhido estiver entre os monitorados, cada CANDLE_CLOSED
-  // desse ativo e acrescentado ao historico ja carregado (sem precisar recarregar tudo).
+  // Vela recem-fechada: se o ativo escolhido estiver entre os monitorados, cada CANDLE_CLOSED
+  // desse ativo substitui/acrescenta ao historico ja carregado (sem precisar recarregar tudo).
   useEffect(() => {
     const last = events[0];
     if (!last || last.type !== 'CANDLE_CLOSED' || last.activeId !== selectedAssetIdRef.current) return;
     const candle = (last.payload as { candle?: Candle }).candle;
     if (!candle) return;
-    setCandles((prev) => {
-      const next = [...prev];
-      const lastPrev = next[next.length - 1];
-      if (lastPrev && lastPrev.from === candle.from) next[next.length - 1] = candle;
-      else next.push(candle);
-      return next;
-    });
+    setCandles((prev) => mergeCandle(prev, candle));
   }, [events]);
+
+  // Tick da vela AINDA EM FORMACAO (CANDLE_UPDATED) — e o que faz o grafico "se mexer" em
+  // tempo real dentro do minuto, nao so quando uma vela fecha.
+  useEffect(() => {
+    if (!lastCandleUpdate || lastCandleUpdate.activeId !== selectedAssetIdRef.current) return;
+    setCandles((prev) => mergeCandle(prev, lastCandleUpdate.candle));
+  }, [lastCandleUpdate]);
+
+  const isLive = lastCandleUpdate !== null && lastCandleUpdate.activeId === selectedAssetId;
 
   function nameOf(id: number): string {
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
@@ -146,8 +164,22 @@ export function ChartPage() {
 
       {candles.length > 0 && (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <div className="text-sm font-semibold mb-2">
-            {selectedAssetId !== null ? nameOf(selectedAssetId) : ''} — {candles.length} velas M1
+          <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <span>
+              {selectedAssetId !== null ? nameOf(selectedAssetId) : ''} — {candles.length} velas M1
+            </span>
+            {isLive ? (
+              <span className="flex items-center gap-1 text-xs font-medium text-rose-400">
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
+              </span>
+            ) : (
+              selectedAssetId !== null &&
+              !settings?.selectedActiveIds.includes(selectedAssetId) && (
+                <span className="text-xs text-slate-500">
+                  (sem atualização ao vivo — adicione este ativo em Configurações para monitorá-lo)
+                </span>
+              )
+            )}
           </div>
           <CandleChart candles={candles} markers={markers} />
         </div>

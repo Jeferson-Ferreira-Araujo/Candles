@@ -87,8 +87,13 @@ export class LiveMonitorService extends EventEmitter {
 
   private async handleCandle(activeId: number, candle: Candle): Promise<void> {
     // Candle ainda se formando: nunca alimenta o engine ("nunca confirmar usando candle
-    // ainda aberto").
-    if (!candle.isClosed) return;
+    // ainda aberto") nem persiste (chegaria a varios ticks por minuto, sem valor de auditoria
+    // depois que a vela fecha de verdade) — so repassa pra quem quiser mostrar o preco ao vivo
+    // (ex.: grafico de velas).
+    if (!candle.isClosed) {
+      this.emitTransient('CANDLE_UPDATED', activeId, { candle });
+      return;
+    }
 
     await saveCandle(this.db, candle, 'live');
     this.emitEvent('CANDLE_CLOSED', activeId, { candle });
@@ -123,6 +128,12 @@ export class LiveMonitorService extends EventEmitter {
   private emitEvent(type: AppEvent['type'], activeId: number, payload: Record<string, unknown>): void {
     const event: AppEvent = { id: randomUUID(), type, activeId, payload, createdAt: Date.now() };
     insertEvent(this.db, event).catch((err) => console.error('[live] falha ao persistir evento:', err));
+    this.emit('event', event);
+  }
+
+  /** Como emitEvent, mas NAO persiste — para eventos de alta frequencia (tick da vela em formacao) sem valor de auditoria. */
+  private emitTransient(type: AppEvent['type'], activeId: number, payload: Record<string, unknown>): void {
+    const event: AppEvent = { id: randomUUID(), type, activeId, payload, createdAt: Date.now() };
     this.emit('event', event);
   }
 }

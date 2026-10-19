@@ -120,6 +120,13 @@ describe('LiveMonitorService (replay via MockBrokerAdapter)', () => {
     const progressEvent = received.find((e) => e.type === 'PATTERN_PROGRESS');
     expect(progressEvent).toBeUndefined(); // candle aberto nunca alimenta o engine
 
+    // Mas o tick da vela em formacao e repassado (so pra UI ao vivo, ex. grafico), e NAO persistido.
+    const updated = received.find((e) => e.type === 'CANDLE_UPDATED');
+    expect(updated).toBeDefined();
+    expect((updated?.payload as { candle: Candle }).candle.close).toBe(40);
+    const persistedEvents = await listEvents(db, 100);
+    expect(persistedEvents.some((e) => e.type === 'CANDLE_UPDATED')).toBe(false);
+
     service.stop();
   });
 });
