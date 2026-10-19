@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import type { AppMode, DailyResult, Settings } from '@polarium12c/shared';
 import { Header } from './Header.js';
@@ -28,6 +28,17 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [dailyResult, setDailyResult] = useState<DailyResult | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+  // Prefixo mais longo vence (ex.: "/pattern-discovery" nao pode casar com o item "/pattern"
+  // so porque comeca com o mesmo texto).
+  const currentNavItem = [...NAV_ITEMS]
+    .filter((item) => (item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)))
+    .sort((a, b) => b.to.length - a.to.length)[0] ?? NAV_ITEMS[0]!;
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   async function refresh() {
     const [h, s, d] = await Promise.all([api.health(), api.getSettings(), api.getDailyResult()]);
@@ -114,24 +125,54 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
         </main>
       </div>
 
-      {/* Barra de navegacao inferior: so em telas < sm (celular). */}
-      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950 border-t border-slate-800 flex">
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) =>
-              `flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] ${
-                isActive ? 'text-white' : 'text-slate-500'
-              }`
-            }
-          >
-            <span className="text-base leading-none">{item.icon}</span>
-            <span className="leading-none">{item.label.split(' ')[0]}</span>
-          </NavLink>
-        ))}
+      {/* Barra inferior no celular: com 9 secoes, cada uma virando icone+rotulo espremidos numa
+          linha so ficava ilegivel (rotulos grudados uns nos outros) — em vez disso, um botao so
+          que mostra a pagina atual e abre a lista completa como um menu deslizante de baixo. */}
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950 border-t border-slate-800">
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          className="w-full flex items-center justify-center gap-2 py-3 text-sm text-slate-200 active:bg-slate-900"
+        >
+          <span className="text-base leading-none">{currentNavItem.icon}</span>
+          <span className="font-medium">{currentNavItem.label}</span>
+          <span className="text-slate-500 text-xs">▲ menu</span>
+        </button>
       </nav>
+
+      {mobileMenuOpen && (
+        <div className="sm:hidden fixed inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label="Fechar menu"
+            onClick={() => setMobileMenuOpen(false)}
+            className="absolute inset-0 bg-black/60"
+          />
+          <div className="relative bg-slate-950 border-t border-slate-800 rounded-t-2xl p-3 pb-6 space-y-1 max-h-[75vh] overflow-y-auto">
+            <div className="flex justify-center pb-2">
+              <div className="h-1 w-10 rounded-full bg-slate-700" />
+            </div>
+            {NAV_ITEMS.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors ${
+                    isActive ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-900'
+                  }`
+                }
+              >
+                <span className="text-lg">{item.icon}</span>
+                <span>
+                  <div className="font-medium">{item.label}</div>
+                  <div className="text-[11px] text-slate-500">{item.hint}</div>
+                </span>
+              </NavLink>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
