@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AssetInfo, Candle } from '@polarium12c/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AssetInfo, Candle, Direction } from '@polarium12c/shared';
 import { api } from '../api.js';
 import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
 import { findBestStrategy, type BestStrategyResult } from '../lib/bestStrategyFinder.js';
@@ -33,10 +33,32 @@ export function ChartPage() {
   const [watchingAssetId, setWatchingAssetId] = useState<number | null>(null);
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null);
   const [best, setBest] = useState<BestStrategyResult | null | 'loading'>(null);
+  const [pendingSignal, setPendingSignal] = useState<Direction | null>(null);
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
+  const bestRef = useRef<BestStrategyResult | null | 'loading'>(null);
+  bestRef.current = best;
+  const daysRef = useRef(days);
+  daysRef.current = days;
   const chartRef = useRef<CandleChartHandle>(null);
+
+  // So da pra checar sinal pendente pra estrategias classicas (o padrao customizado tem seu
+  // proprio aviso ao vivo via LiveMonitorService, quando esta entre os ativos monitorados).
+  const checkPendingSignal = useCallback(async (bestOverride?: BestStrategyResult | null, assetIdOverride?: number) => {
+    const b = bestOverride !== undefined ? bestOverride : bestRef.current;
+    const assetId = assetIdOverride ?? watchingAssetIdRef.current;
+    if (!b || b === 'loading' || b.kind !== 'classic' || !b.strategyId || assetId === null) {
+      setPendingSignal(null);
+      return;
+    }
+    try {
+      const { pending } = await api.getPendingSignal(assetId, daysRef.current, b.strategyId);
+      setPendingSignal(pending?.direction ?? null);
+    } catch {
+      // falha ao checar nao deve derrubar a tela — so nao mostra aviso dessa vez
+    }
+  }, []);
 
   useEffect(() => {
     api.getAssets().then((list) => {
@@ -54,13 +76,16 @@ export function ChartPage() {
   }, []);
 
   // Vela recem-fechada do ativo sendo transmitido — vira a "ponta ao vivo" do grafico, sem
-  // nunca reconstruir o array historico inteiro (ver CandleChart: so a ultima barra muda).
+  // nunca reconstruir o array historico inteiro (ver CandleChart: so a ultima barra muda). Toda
+  // vez que uma vela fecha tambem e o momento certo de reavaliar se o setup da estrategia
+  // acabou de se completar (a vela que vai comecar agora seria a entrada).
   useEffect(() => {
     const last = events[0];
     if (!last || last.type !== 'CANDLE_CLOSED' || last.activeId !== watchingAssetIdRef.current) return;
     const candle = (last.payload as { candle?: Candle }).candle;
     if (candle) setLiveCandle(candle);
-  }, [events]);
+    checkPendingSignal();
+  }, [events, checkPendingSignal]);
 
   // Tick da vela AINDA EM FORMACAO (CANDLE_UPDATED) — e o que faz o grafico "se mexer" em
   // tempo real dentro do minuto, nao so quando uma vela fecha.
@@ -94,9 +119,11 @@ export function ChartPage() {
       setLoadingChart(false);
     }
 
+    setPendingSignal(null);
     try {
       const result = await findBestStrategy(assetId, days);
       setBest(result);
+      checkPendingSignal(result, assetId);
     } catch {
       setBest(null);
     }
@@ -191,6 +218,29 @@ export function ChartPage() {
           <span className="text-emerald-400">{best.wins}W</span>
           <span className="text-rose-400">{best.losses}L</span>
           <span className="font-semibold text-white">{formatPct(best.winRate)}</span>
+          <span className="text-slate-500 ml-auto hidden sm:flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" /> acerto
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-rose-500" /> erro
+            </span>
+          </span>
+        </div>
+      )}
+
+      {/* Aviso de entrada ao vivo: o setup da melhor estrategia acabou de se completar na
+          ultima vela fechada — a vela se formando agora e a entrada (compra ou venda). */}
+      {pendingSignal && (
+        <div
+          className={`px-3 sm:px-6 py-2 flex items-center gap-2 text-sm font-bold border-b animate-pulse ${
+            pendingSignal === 'CALL'
+              ? 'bg-emerald-600/90 border-emerald-500 text-white'
+              : 'bg-rose-600/90 border-rose-500 text-white'
+          }`}
+        >
+          <span className="text-base">🔔</span>
+          ENTRADA AGORA — {pendingSignal === 'CALL' ? 'COMPRA (CALL)' : 'VENDA (PUT)'}: a vela atual é a entrada
         </div>
       )}
       {chartError && (
@@ -246,14 +296,18 @@ export function ChartPage() {
         <button
           type="button"
           title="Este app apenas monitora — não envia ordens."
-          className="order-2 sm:order-1 flex-1 sm:flex-none rounded-lg bg-rose-700/90 hover:bg-rose-600/90 px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide"
+          className={`order-2 sm:order-1 flex-1 sm:flex-none rounded-lg px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide transition-colors ${
+            pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
+          }`}
         >
           VENDER
         </button>
         <button
           type="button"
           title="Este app apenas monitora — não envia ordens."
-          className="order-3 sm:order-2 flex-1 sm:flex-none rounded-lg bg-emerald-700/90 hover:bg-emerald-600/90 px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide"
+          className={`order-3 sm:order-2 flex-1 sm:flex-none rounded-lg px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide transition-colors ${
+            pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
+          }`}
         >
           COMPRAR
         </button>

@@ -28,7 +28,7 @@ import {
 import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { runPatternDiscovery } from './discovery/patternDiscovery.js';
-import { runClassicStrategy } from './strategies/classicStrategies.js';
+import { runClassicStrategy, detectPendingSignal } from './strategies/classicStrategies.js';
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
@@ -254,6 +254,34 @@ app.post('/api/classic-strategy', async (req, res) => {
     const strategy = defaultClassicStrategyConfig(strategyId);
     const result = await runClassicStrategy(brokerManager.get(), activeId!, days!, strategy);
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Verifica se o setup da estrategia acabou de se completar na ultima vela fechada — ou seja,
+// se a vela ainda se formando AGORA ja e a entrada (compra/venda). So pra estrategias
+// classicas por enquanto (o padrao customizado ja tem sinalizacao ao vivo propria via
+// LiveMonitorService/PATTERN_CONFIRMED, quando o ativo esta entre os monitorados).
+app.post('/api/classic-strategy/pending', async (req, res) => {
+  const { activeId, days, strategyId } = req.body as { activeId?: number; days?: number; strategyId?: ClassicStrategyId };
+  if (!Number.isFinite(activeId) || !Number.isFinite(days) || (days ?? 0) <= 0) {
+    res.status(400).json({ error: 'Informe activeId e days (numero positivo).' });
+    return;
+  }
+  if (!strategyId || !CLASSIC_STRATEGY_IDS.includes(strategyId)) {
+    res.status(400).json({ error: 'Informe um strategyId válido.' });
+    return;
+  }
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - days! * 24 * 60 * 60;
+    const candles = (await brokerManager.get().getHistoricalCandles(activeId!, CANDLE_SIZE_M1, from, now))
+      .filter((c) => c.isClosed)
+      .sort((a, b) => a.from - b.from);
+    const strategy = defaultClassicStrategyConfig(strategyId);
+    const pending = detectPendingSignal(candles, strategy);
+    res.json({ pending });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

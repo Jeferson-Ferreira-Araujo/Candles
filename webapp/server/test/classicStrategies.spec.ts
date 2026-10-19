@@ -8,7 +8,7 @@ import {
   DEFAULT_SEQUENCE_REVERSAL_PARAMS,
 } from '@polarium12c/shared';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
-import { runClassicStrategy } from '../src/strategies/classicStrategies.js';
+import { runClassicStrategy, detectPendingSignal } from '../src/strategies/classicStrategies.js';
 
 const ACTIVE = 81;
 const SIZE = 60;
@@ -125,6 +125,45 @@ describe('runClassicStrategy — sequence_reversal', () => {
 
     const result = await run(candles, { id: 'sequence_reversal', params });
     expect(result.occurrences).toHaveLength(0);
+  });
+});
+
+describe('detectPendingSignal', () => {
+  it('acusa sinal pendente quando o setup acabou de se completar na ultima vela FECHADA', () => {
+    const params = { ...DEFAULT_SEQUENCE_REVERSAL_PARAMS, sequenceLength: 4 };
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 4; i++) {
+      candles.push(solid(from, 'R'));
+      from += SIZE;
+    }
+    candles.push(solid(from, 'G')); // reversao acabou de fechar — SEM candle de entrada ainda
+    const pending = detectPendingSignal(candles, { id: 'sequence_reversal', params });
+    expect(pending).not.toBeNull();
+    expect(pending!.direction).toBe('CALL');
+  });
+
+  it('nao acusa nada quando nenhum setup se completou na ultima vela', () => {
+    const params = { ...DEFAULT_SEQUENCE_REVERSAL_PARAMS, sequenceLength: 4 };
+    let from = BASE;
+    const candles: Candle[] = [solid(from, 'R')];
+    from += SIZE;
+    candles.push(solid(from, 'G')); // so 1 vela — nao fecha sequencia nenhuma
+    expect(detectPendingSignal(candles, { id: 'sequence_reversal', params })).toBeNull();
+  });
+
+  it('para de acusar depois que a entrada de verdade ja aconteceu (nao fica preso no passado)', async () => {
+    const params = { ...DEFAULT_SEQUENCE_REVERSAL_PARAMS, sequenceLength: 4 };
+    let from = BASE;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 4; i++) {
+      candles.push(solid(from, 'R'));
+      from += SIZE;
+    }
+    candles.push(solid(from, 'G'));
+    from += SIZE;
+    candles.push(solid(from, 'G')); // entrada ja aconteceu — o setup "acabou" 1 vela atras, nao agora
+    expect(detectPendingSignal(candles, { id: 'sequence_reversal', params })).toBeNull();
   });
 });
 

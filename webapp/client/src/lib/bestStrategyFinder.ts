@@ -12,6 +12,8 @@ export interface BestStrategyOccurrenceLike {
 
 export interface BestStrategyResult {
   kind: 'classic' | 'pattern';
+  /** So presente quando kind === 'classic' — usado pra checar sinal pendente (entrada ao vivo). */
+  strategyId?: ClassicStrategyId;
   name: string;
   wins: number;
   losses: number;
@@ -53,6 +55,7 @@ export async function findBestStrategy(activeId: number, days: number): Promise<
     if (rate === null || result.occurrences.length < MIN_OCCURRENCES) return;
     candidates.push({
       kind: 'classic',
+      strategyId: CLASSIC_STRATEGIES[i]!.id as ClassicStrategyId,
       name: CLASSIC_STRATEGIES[i]!.name,
       wins: result.summary.wins,
       losses: result.summary.losses,

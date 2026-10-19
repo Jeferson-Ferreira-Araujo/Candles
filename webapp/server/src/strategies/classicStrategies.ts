@@ -450,6 +450,30 @@ function detectSignals(candles: Candle[], strategy: ClassicStrategyConfig): RawS
   }
 }
 
+/**
+ * Verifica se o setup da estrategia ACABOU de se completar na ultima vela fechada — ou seja,
+ * se a vela que esta se formando agora e a entrada (compra/venda). Reaproveita os mesmos
+ * detectores de `runClassicStrategy` sem duplicar logica: cada detector so olha pra tras do
+ * indice de entrada pra casar o setup (o candle de entrada em si so e lido DEPOIS, so pra
+ * classificar WIN/LOSS) — entao basta um candle "dummy" no fim (nunca lido pelo matching) pra
+ * satisfazer o `candles[entryIndex]` que os loops exigem, e filtrar pelas ocorrencias cujo
+ * entryIndex caia EXATAMENTE nesse dummy (ou seja, a entrada ainda nao aconteceu de verdade).
+ */
+export function detectPendingSignal(
+  closedCandles: Candle[],
+  strategy: ClassicStrategyConfig
+): { direction: Direction; signalMetricValue: number } | null {
+  if (closedCandles.length === 0) return null;
+  const last = closedCandles[closedCandles.length - 1]!;
+  const dummy: Candle = { ...last, from: last.to, to: last.to + (last.to - last.from), isClosed: false };
+  const withDummy = [...closedCandles, dummy];
+
+  const signals = detectSignals(withDummy, strategy);
+  const pending = signals.find((s) => s.entryIndex === closedCandles.length);
+  if (!pending) return null;
+  return { direction: pending.direction, signalMetricValue: pending.signalMetricValue };
+}
+
 export async function runClassicStrategy(
   broker: BrokerAdapter,
   activeId: number,
