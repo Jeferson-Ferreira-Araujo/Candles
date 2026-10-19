@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetInfo, Candle, ClassicStrategyId, Direction } from '@polarium12c/shared';
 import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
-import { api } from '../api.js';
+import { api, type AssetScanRanking } from '../api.js';
 import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
 import {
   findBestStrategy,
@@ -59,6 +59,8 @@ export function ChartPage() {
   const [pendingSignal, setPendingSignal] = useState<Direction | null>(null);
   const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
   const [scanInfo, setScanInfo] = useState<{ assetsScanned: number; tookMs: number; bestAssetName?: string } | null>(null);
+  const [scanRanking, setScanRanking] = useState<AssetScanRanking[]>([]);
+  const [showRanking, setShowRanking] = useState(false);
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
@@ -150,6 +152,8 @@ export function ChartPage() {
     try {
       const res = await api.scanAllAssets(SCAN_DAYS);
       setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
+      setScanRanking(res.top);
+      setShowRanking(res.top.length > 0);
       setScanStatus('done');
       if (res.best) {
         setDays(SCAN_DAYS);
@@ -216,6 +220,12 @@ export function ChartPage() {
       return;
     }
     loadChartFor(selectedAssetId);
+  }
+
+  function applyRanking(row: AssetScanRanking) {
+    setDays(SCAN_DAYS);
+    setStrategyMode(row.strategyId);
+    loadChartFor(row.activeId, row.strategyId, SCAN_DAYS);
   }
 
   const markers: ChartMarker[] = best && best !== 'loading' ? best.markers : [];
@@ -317,14 +327,62 @@ export function ChartPage() {
         </div>
       )}
       {scanStatus === 'done' && scanInfo && (
-        <div className="px-3 sm:px-6 py-1 text-[11px] text-slate-500 border-b border-slate-800 bg-slate-950">
-          Varredura: {scanInfo.assetsScanned} ativos em {formatMs(scanInfo.tookMs)}
-          {scanInfo.bestAssetName ? ` — melhor: ${scanInfo.bestAssetName}` : ' — nenhum ativo teve ocorrências suficientes'}.
+        <div className="px-3 sm:px-6 py-1 text-[11px] text-slate-500 border-b border-slate-800 bg-slate-950 flex items-center gap-2 flex-wrap">
+          <span>
+            Varredura: {scanInfo.assetsScanned} ativos em {formatMs(scanInfo.tookMs)}
+            {scanInfo.bestAssetName ? ` — melhor: ${scanInfo.bestAssetName}` : ' — nenhum ativo teve ocorrências suficientes'}.
+          </span>
+          {scanRanking.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowRanking((v) => !v)}
+              className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
+            >
+              {showRanking ? 'ocultar ranking' : `ver ranking completo (${scanRanking.length})`}
+            </button>
+          )}
         </div>
       )}
       {scanStatus === 'error' && (
         <div className="px-3 sm:px-6 py-1 text-[11px] text-rose-400 border-b border-slate-800 bg-rose-950/20">
           Falha ao analisar todos os ativos (tente de novo pelo botão).
+        </div>
+      )}
+
+      {/* Ranking completo da varredura: ativo + estrategia + taxa de acerto, pra comparar e
+          escolher manualmente em vez de so aceitar a sugestao automatica. */}
+      {showRanking && scanRanking.length > 0 && (
+        <div className="border-b border-slate-800 bg-slate-950 max-h-56 overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-slate-900 text-slate-500">
+              <tr>
+                <th className="text-left font-medium px-3 sm:px-6 py-1.5">#</th>
+                <th className="text-left font-medium py-1.5">Ativo</th>
+                <th className="text-left font-medium py-1.5">Estratégia</th>
+                <th className="text-right font-medium py-1.5">Acerto</th>
+                <th className="text-right font-medium px-3 sm:px-6 py-1.5">W/L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scanRanking.map((row, i) => (
+                <tr
+                  key={`${row.activeId}-${row.strategyId}`}
+                  onClick={() => applyRanking(row)}
+                  className={`cursor-pointer border-t border-slate-900 hover:bg-slate-900 transition-colors ${
+                    row.activeId === watchingAssetId && row.strategyId === strategyMode ? 'bg-slate-800' : ''
+                  }`}
+                >
+                  <td className="px-3 sm:px-6 py-1.5 text-slate-500">{i + 1}</td>
+                  <td className="py-1.5 font-medium">{row.assetName}</td>
+                  <td className="py-1.5 text-slate-400">{row.strategyName}</td>
+                  <td className="py-1.5 text-right font-semibold text-emerald-400">{formatPct(row.winRate)}</td>
+                  <td className="px-3 sm:px-6 py-1.5 text-right text-slate-500">
+                    {row.wins}/{row.losses}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

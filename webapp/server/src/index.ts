@@ -357,7 +357,7 @@ app.post('/api/scan-all-assets', async (req, res) => {
     ranking.sort((a, b) => b.winRate - a.winRate || b.occurrences - a.occurrences);
     res.json({
       best: ranking[0] ?? null,
-      top: ranking.slice(0, 10),
+      top: ranking.slice(0, 20),
       assetsScanned: assets.length,
       tookMs: Date.now() - startedAt,
     });

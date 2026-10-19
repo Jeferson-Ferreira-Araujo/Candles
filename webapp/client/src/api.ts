@@ -24,6 +24,18 @@ export interface AuthStatus {
   authenticated: boolean;
 }
 
+export interface AssetScanRanking {
+  activeId: number;
+  assetName: string;
+  strategyId: ClassicStrategyId;
+  strategyName: string;
+  winRate: number;
+  wins: number;
+  losses: number;
+  dojis: number;
+  occurrences: number;
+}
+
 // Em dev local, vazio (o proxy do Vite encaminha /api para http://localhost:4000). Em
 // producao, aponte para a URL publica do backend no Render via VITE_API_BASE_URL.
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -139,18 +151,8 @@ export const api = {
       body: JSON.stringify({ days }),
     }).then((r) =>
       json<{
-        best: {
-          activeId: number;
-          assetName: string;
-          strategyId: ClassicStrategyId;
-          strategyName: string;
-          winRate: number;
-          wins: number;
-          losses: number;
-          dojis: number;
-          occurrences: number;
-        } | null;
-        top: unknown[];
+        best: AssetScanRanking | null;
+        top: AssetScanRanking[];
         assetsScanned: number;
         tookMs: number;
       }>(r)
