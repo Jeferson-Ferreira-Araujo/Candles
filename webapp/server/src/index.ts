@@ -28,7 +28,7 @@ import {
 import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { runPatternDiscovery } from './discovery/patternDiscovery.js';
-import { runClassicStrategy, detectPendingSignal } from './strategies/classicStrategies.js';
+import { runClassicStrategy, runAllClassicStrategiesForAsset, detectPendingSignal } from './strategies/classicStrategies.js';
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
@@ -282,6 +282,85 @@ app.post('/api/classic-strategy/pending', async (req, res) => {
     const strategy = defaultClassicStrategyConfig(strategyId);
     const pending = detectPendingSignal(candles, strategy);
     res.json({ pending });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+const SCAN_ALL_ASSETS_CONCURRENCY = 5;
+const SCAN_ALL_ASSETS_MIN_OCCURRENCES = 3;
+const ALL_CLASSIC_STRATEGY_CONFIGS = CLASSIC_STRATEGIES.map((s) => defaultClassicStrategyConfig(s.id));
+
+interface AssetScanRanking {
+  activeId: number;
+  assetName: string;
+  strategyId: ClassicStrategyId;
+  strategyName: string;
+  winRate: number;
+  wins: number;
+  losses: number;
+  dojis: number;
+  occurrences: number;
+}
+
+/**
+ * Roda as 10 estrategias classicas em TODOS os ativos (um periodo curto, tipicamente 1 dia) e
+ * devolve o ranking por taxa de acerto — usado pela tela "Grafico" pra sugerir o melhor
+ * ativo+estrategia do momento, assim que a pagina carrega. Pesado de proposito (e uma varredura
+ * completa): busca o historico de CADA ativo uma unica vez (nao uma vez por estrategia) e limita
+ * a concorrencia entre ativos pra nao sobrecarregar a conexao com a corretora.
+ */
+app.post('/api/scan-all-assets', async (req, res) => {
+  const { days } = req.body as { days?: number };
+  if (!Number.isFinite(days) || (days ?? 0) <= 0) {
+    res.status(400).json({ error: 'Informe days (numero positivo).' });
+    return;
+  }
+  const startedAt = Date.now();
+  try {
+    const assets = await brokerManager.get().listAssets();
+    const ranking: AssetScanRanking[] = [];
+    let cursor = 0;
+
+    async function worker(): Promise<void> {
+      for (;;) {
+        const i = cursor++;
+        if (i >= assets.length) return;
+        const asset = assets[i]!;
+        try {
+          const results = await runAllClassicStrategiesForAsset(brokerManager.get(), asset.id, days!, ALL_CLASSIC_STRATEGY_CONFIGS);
+          for (const r of results) {
+            const total = r.summary.wins + r.summary.losses + r.summary.dojis;
+            if (total < SCAN_ALL_ASSETS_MIN_OCCURRENCES) continue;
+            const winRate = r.summary.wins / total;
+            ranking.push({
+              activeId: asset.id,
+              assetName: asset.name,
+              strategyId: r.strategy.id,
+              strategyName: CLASSIC_STRATEGIES.find((s) => s.id === r.strategy.id)!.name,
+              winRate,
+              wins: r.summary.wins,
+              losses: r.summary.losses,
+              dojis: r.summary.dojis,
+              occurrences: total,
+            });
+          }
+        } catch (err) {
+          // Um ativo falhar (ex.: sem historico suficiente) nao deve derrubar a varredura inteira.
+          console.error(`[scan-all-assets] falha no ativo ${asset.id}:`, err instanceof Error ? err.message : err);
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: SCAN_ALL_ASSETS_CONCURRENCY }, () => worker()));
+
+    ranking.sort((a, b) => b.winRate - a.winRate || b.occurrences - a.occurrences);
+    res.json({
+      best: ranking[0] ?? null,
+      top: ranking.slice(0, 10),
+      assetsScanned: assets.length,
+      tookMs: Date.now() - startedAt,
+    });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

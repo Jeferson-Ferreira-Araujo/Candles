@@ -22,7 +22,7 @@ export interface BestStrategyResult {
   markers: ChartMarker[];
 }
 
-const MIN_OCCURRENCES = 3; // abaixo disso a taxa nao e confiavel o suficiente pra escolher como "melhor"
+const MIN_OCCURRENCES = 3; // abaixo disso a taxa nao e confiavel o suficiente pra escolher como "melhor" automaticamente
 
 function winRateOf(wins: number, losses: number, dojis: number): number | null {
   const total = wins + losses + dojis;
@@ -34,6 +34,45 @@ function markerFor(entryAt: number, direction: Direction, result: TradeResult | 
   return direction === 'CALL'
     ? { time: entryAt, position: 'belowBar', color, shape: 'arrowUp', text: result ?? undefined }
     : { time: entryAt, position: 'aboveBar', color, shape: 'arrowDown', text: result ?? undefined };
+}
+
+/** Roda UMA estrategia classica especifica (escolha manual do usuario, nao a "melhor automatica"
+ * — por isso nao filtra por MIN_OCCURRENCES, mostra o que vier, mesmo com poucas ocorrencias). */
+export async function runSingleClassicStrategy(
+  activeId: number,
+  days: number,
+  strategyId: ClassicStrategyId
+): Promise<BestStrategyResult> {
+  const result = await api.runClassicStrategy(activeId, days, strategyId);
+  const rate = winRateOf(result.summary.wins, result.summary.losses, result.summary.dojis) ?? 0;
+  return {
+    kind: 'classic',
+    strategyId,
+    name: CLASSIC_STRATEGIES.find((s) => s.id === strategyId)!.name,
+    wins: result.summary.wins,
+    losses: result.summary.losses,
+    dojis: result.summary.dojis,
+    winRate: rate,
+    markers: result.occurrences.filter((o) => o.entryCandle).map((o) => markerFor(o.entryCandle!.from, o.direction, o.result)),
+  };
+}
+
+/** Roda o padrao customizado ativo (escolha manual do usuario). Lanca se nao houver padrao ativo. */
+export async function runActivePatternStrategy(activeId: number, days: number): Promise<BestStrategyResult> {
+  const activePattern = await api.getActivePattern();
+  if (!activePattern) throw new Error('Nenhum padrão customizado ativo.');
+  const direction = entryDirectionOf(activePattern.candles);
+  const pattern = await api.runBacktest([activeId], days);
+  const rate = winRateOf(pattern.summary.allOccurrences.wins, pattern.summary.allOccurrences.losses, pattern.summary.allOccurrences.dojis) ?? 0;
+  return {
+    kind: 'pattern',
+    name: `Padrão ativo (${activePattern.name})`,
+    wins: pattern.summary.allOccurrences.wins,
+    losses: pattern.summary.allOccurrences.losses,
+    dojis: pattern.summary.allOccurrences.dojis,
+    winRate: rate,
+    markers: pattern.occurrences.filter((o) => o.candle13).map((o) => markerFor(o.candle13!.from, direction, o.result)),
+  };
 }
 
 /**
@@ -68,24 +107,9 @@ export async function findBestStrategy(activeId: number, days: number): Promise<
   });
 
   try {
-    const activePattern = await api.getActivePattern();
-    if (activePattern) {
-      const direction = entryDirectionOf(activePattern.candles);
-      const pattern = await api.runBacktest([activeId], days);
-      const rate = winRateOf(pattern.summary.allOccurrences.wins, pattern.summary.allOccurrences.losses, pattern.summary.allOccurrences.dojis);
-      if (rate !== null && pattern.occurrences.length >= MIN_OCCURRENCES) {
-        candidates.push({
-          kind: 'pattern',
-          name: `Padrão ativo (${activePattern.name})`,
-          wins: pattern.summary.allOccurrences.wins,
-          losses: pattern.summary.allOccurrences.losses,
-          dojis: pattern.summary.allOccurrences.dojis,
-          winRate: rate,
-          markers: pattern.occurrences
-            .filter((o) => o.candle13)
-            .map((o) => markerFor(o.candle13!.from, direction, o.result)),
-        });
-      }
+    const patternCandidate = await runActivePatternStrategy(activeId, days);
+    if (patternCandidate.wins + patternCandidate.losses + patternCandidate.dojis >= MIN_OCCURRENCES) {
+      candidates.push(patternCandidate);
     }
   } catch {
     // sem padrao ativo ou falha ao rodar — simplesmente nao entra na comparacao

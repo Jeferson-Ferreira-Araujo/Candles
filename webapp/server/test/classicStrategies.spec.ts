@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Candle } from '@polarium12c/shared';
 import {
   DEFAULT_COMPRESSION_BREAKOUT_PARAMS,
@@ -8,7 +8,8 @@ import {
   DEFAULT_SEQUENCE_REVERSAL_PARAMS,
 } from '@polarium12c/shared';
 import { MockBrokerAdapter } from '../src/broker/MockBrokerAdapter.js';
-import { runClassicStrategy, detectPendingSignal } from '../src/strategies/classicStrategies.js';
+import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig } from '@polarium12c/shared';
+import { runClassicStrategy, runAllClassicStrategiesForAsset, detectPendingSignal } from '../src/strategies/classicStrategies.js';
 
 const ACTIVE = 81;
 const SIZE = 60;
@@ -125,6 +126,28 @@ describe('runClassicStrategy — sequence_reversal', () => {
 
     const result = await run(candles, { id: 'sequence_reversal', params });
     expect(result.occurrences).toHaveLength(0);
+  });
+});
+
+describe('runAllClassicStrategiesForAsset', () => {
+  it('busca o historico UMA unica vez e devolve um resultado por estrategia', async () => {
+    const broker = new MockBrokerAdapter();
+    await broker.authenticate();
+    const candles: Candle[] = [];
+    let from = BASE;
+    for (let i = 0; i < 10; i++) {
+      candles.push(solid(from, i % 2 === 0 ? 'G' : 'R'));
+      from += SIZE;
+    }
+    broker.seedCandles(ACTIVE, candles);
+    const spy = vi.spyOn(broker, 'getHistoricalCandles');
+
+    const configs = CLASSIC_STRATEGIES.map((s) => defaultClassicStrategyConfig(s.id));
+    const results = await runAllClassicStrategiesForAsset(broker, ACTIVE, 30, configs);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(CLASSIC_STRATEGIES.length);
+    expect(results.map((r) => r.strategy.id)).toEqual(CLASSIC_STRATEGIES.map((s) => s.id));
   });
 });
 

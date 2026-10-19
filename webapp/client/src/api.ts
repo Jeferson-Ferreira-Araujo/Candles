@@ -132,6 +132,30 @@ export const api = {
       body: JSON.stringify({ activeId, days, strategyId }),
     }).then((r) => json<ClassicStrategyResult>(r)),
 
+  scanAllAssets: (days: number) =>
+    req('/api/scan-all-assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days }),
+    }).then((r) =>
+      json<{
+        best: {
+          activeId: number;
+          assetName: string;
+          strategyId: ClassicStrategyId;
+          strategyName: string;
+          winRate: number;
+          wins: number;
+          losses: number;
+          dojis: number;
+          occurrences: number;
+        } | null;
+        top: unknown[];
+        assetsScanned: number;
+        tookMs: number;
+      }>(r)
+    ),
+
   getPendingSignal: (activeId: number, days: number, strategyId: ClassicStrategyId) =>
     req('/api/classic-strategy/pending', {
       method: 'POST',

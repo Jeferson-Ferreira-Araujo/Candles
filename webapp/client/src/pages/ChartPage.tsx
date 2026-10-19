@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssetInfo, Candle, Direction } from '@polarium12c/shared';
+import type { AssetInfo, Candle, ClassicStrategyId, Direction } from '@polarium12c/shared';
+import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
 import { api } from '../api.js';
 import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
-import { findBestStrategy, type BestStrategyResult } from '../lib/bestStrategyFinder.js';
+import {
+  findBestStrategy,
+  runActivePatternStrategy,
+  runSingleClassicStrategy,
+  type BestStrategyResult,
+} from '../lib/bestStrategyFinder.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
 const DEFAULT_DAYS = 3;
+const SCAN_DAYS = 1; // periodo curto de proposito: a varredura roda em TODOS os ativos, 1 dia ja e pesado
+
+/** 'auto' = deixa o app escolher a melhor entre todas; os demais sao escolha manual do usuario. */
+type StrategyMode = 'auto' | 'pattern' | ClassicStrategyId;
 
 function formatPct(p: number): string {
   return `${(p * 100).toFixed(1)}%`;
@@ -15,18 +25,31 @@ function formatPrice(p: number): string {
   return p.toFixed(5);
 }
 
+function formatMs(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+async function resolveStrategy(assetId: number, days: number, mode: StrategyMode): Promise<BestStrategyResult | null> {
+  if (mode === 'auto') return findBestStrategy(assetId, days);
+  if (mode === 'pattern') return runActivePatternStrategy(assetId, days);
+  return runSingleClassicStrategy(assetId, days, mode);
+}
+
 /**
  * Tela inicial do app: grafico de candlestick real em tempo real, estilo corretora — escolhe
  * um ativo (pelo seletor ou pela lista lateral), ve as velas se movendo ao vivo, com os sinais
- * da melhor estrategia testada sobrepostos. A barra inferior (preco, Comprar/Vender) e so
- * visual, pra ficar parecido com a tela que o usuario ja conhece — este app nunca envia ordem
- * nenhuma (ver README: so monitora e sugere, quem decide e executa e sempre o usuario).
+ * da estrategia escolhida sobrepostos (automatica ou manual, ver seletor "Estratégia"). A barra
+ * inferior (preco, Comprar/Vender) e so visual, pra ficar parecido com a tela que o usuario ja
+ * conhece — este app nunca envia ordem nenhuma (so monitora e sugere, quem decide e executa e
+ * sempre o usuario).
  */
 export function ChartPage() {
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [assetFilter, setAssetFilter] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [days, setDays] = useState(DEFAULT_DAYS);
+  const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
+  const [hasActivePattern, setHasActivePattern] = useState(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
@@ -34,6 +57,8 @@ export function ChartPage() {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null);
   const [best, setBest] = useState<BestStrategyResult | null | 'loading'>(null);
   const [pendingSignal, setPendingSignal] = useState<Direction | null>(null);
+  const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
+  const [scanInfo, setScanInfo] = useState<{ assetsScanned: number; tookMs: number; bestAssetName?: string } | null>(null);
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
@@ -41,6 +66,9 @@ export function ChartPage() {
   bestRef.current = best;
   const daysRef = useRef(days);
   daysRef.current = days;
+  const strategyModeRef = useRef(strategyMode);
+  strategyModeRef.current = strategyMode;
+  const scanStartedRef = useRef(false);
   const chartRef = useRef<CandleChartHandle>(null);
 
   // So da pra checar sinal pendente pra estrategias classicas (o padrao customizado tem seu
@@ -60,12 +88,93 @@ export function ChartPage() {
     }
   }, []);
 
+  const loadChartFor = useCallback(async (assetId: number, modeOverride?: StrategyMode, daysOverride?: number) => {
+    const mode = modeOverride ?? strategyModeRef.current;
+    const d = daysOverride ?? daysRef.current;
+    setSelectedAssetId(assetId);
+    setChartError(null);
+    setLoadingChart(true);
+    setBest('loading');
+    setLiveCandle(null);
+    setPendingSignal(null);
+    try {
+      const [data] = await Promise.all([api.getCandles(assetId, d), api.watchChartAsset(assetId)]);
+      setCandles(data);
+      setWatchingAssetId(assetId);
+    } catch (err) {
+      setChartError(err instanceof Error ? err.message : String(err));
+      setCandles([]);
+      setWatchingAssetId(null);
+    } finally {
+      setLoadingChart(false);
+    }
+
+    try {
+      const result = await resolveStrategy(assetId, d, mode);
+      setBest(result);
+      checkPendingSignal(result, assetId);
+    } catch (err) {
+      setBest(null);
+      setChartError((prev) => prev ?? (err instanceof Error ? err.message : String(err)));
+    }
+  }, [checkPendingSignal]);
+
+  // So recalcula estrategia/marcadores pro ativo ja carregado — nao mexe nas velas nem
+  // reabre a transmissao (rapido, usado quando o usuario troca so a estrategia no seletor).
+  const applyStrategy = useCallback(async (mode: StrategyMode) => {
+    const assetId = watchingAssetIdRef.current;
+    if (assetId === null) return;
+    setBest('loading');
+    setPendingSignal(null);
+    try {
+      const result = await resolveStrategy(assetId, daysRef.current, mode);
+      setBest(result);
+      checkPendingSignal(result, assetId);
+    } catch (err) {
+      setBest(null);
+      setChartError(err instanceof Error ? err.message : String(err));
+    }
+  }, [checkPendingSignal]);
+
+  function onStrategyModeChange(mode: StrategyMode) {
+    setStrategyMode(mode);
+    applyStrategy(mode);
+  }
+
+  // Varredura completa: roda as 10 estrategias classicas em TODOS os ativos (periodo curto,
+  // 1 dia) e abre direto o par ativo+estrategia que teve a melhor taxa de acerto. Pesado de
+  // proposito — avisa no botao/banner se estiver demorando, mas o usuario pode continuar
+  // usando a tela normalmente enquanto isso roda em paralelo.
+  const runFullScan = useCallback(async () => {
+    setScanStatus('scanning');
+    try {
+      const res = await api.scanAllAssets(SCAN_DAYS);
+      setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
+      setScanStatus('done');
+      if (res.best) {
+        setDays(SCAN_DAYS);
+        setStrategyMode(res.best.strategyId);
+        loadChartFor(res.best.activeId, res.best.strategyId, SCAN_DAYS);
+      }
+    } catch {
+      setScanStatus('error');
+    }
+  }, [loadChartFor]);
+
   useEffect(() => {
     api.getAssets().then((list) => {
       setAssets(list);
       setSelectedAssetId((current) => current ?? list[0]?.id ?? null);
     }).catch(() => {});
+    api.getActivePattern().then((p) => setHasActivePattern(!!p)).catch(() => {});
   }, []);
+
+  // Analise inicial automatica — so uma vez, assim que a lista de ativos chega.
+  useEffect(() => {
+    if (assets.length === 0 || scanStartedRef.current) return;
+    scanStartedRef.current = true;
+    runFullScan();
+  }, [assets, runFullScan]);
 
   // Para a transmissao ao sair da tela (sem isso, o servidor continuaria assinado no ultimo
   // ativo escolhido indefinidamente).
@@ -101,34 +210,6 @@ export function ChartPage() {
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   }
 
-  async function loadChartFor(assetId: number) {
-    setSelectedAssetId(assetId);
-    setChartError(null);
-    setLoadingChart(true);
-    setBest('loading');
-    setLiveCandle(null);
-    try {
-      const [data] = await Promise.all([api.getCandles(assetId, days), api.watchChartAsset(assetId)]);
-      setCandles(data);
-      setWatchingAssetId(assetId);
-    } catch (err) {
-      setChartError(err instanceof Error ? err.message : String(err));
-      setCandles([]);
-      setWatchingAssetId(null);
-    } finally {
-      setLoadingChart(false);
-    }
-
-    setPendingSignal(null);
-    try {
-      const result = await findBestStrategy(assetId, days);
-      setBest(result);
-      checkPendingSignal(result, assetId);
-    } catch {
-      setBest(null);
-    }
-  }
-
   function loadChart() {
     if (selectedAssetId === null) {
       setChartError('Selecione um ativo antes de carregar o gráfico.');
@@ -147,7 +228,7 @@ export function ChartPage() {
 
   return (
     <div className="flex flex-col">
-      {/* Barra superior: escolha de ativo + periodo, compacta, sempre visivel. */}
+      {/* Barra superior: escolha de ativo + estrategia + periodo, compacta, sempre visivel. */}
       <div className="px-3 sm:px-6 py-2.5 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
         <select
           value={selectedAssetId ?? ''}
@@ -159,6 +240,21 @@ export function ChartPage() {
             <option key={a.id} value={a.id}>
               {a.name}
               {a.isOtc ? ' (OTC)' : ''}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={strategyMode}
+          onChange={(e) => onStrategyModeChange(e.target.value as StrategyMode)}
+          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm max-w-[160px]"
+          title="Qual estratégia mostrar no gráfico"
+        >
+          <option value="auto">⭐ Automático (melhor)</option>
+          {hasActivePattern && <option value="pattern">Padrão customizado ativo</option>}
+          {CLASSIC_STRATEGIES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
             </option>
           ))}
         </select>
@@ -198,18 +294,46 @@ export function ChartPage() {
         <button
           type="button"
           onClick={() => chartRef.current?.goToRealTime()}
-          className="ml-auto text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5"
+          className="text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5"
         >
           ⏭ Ir para agora
         </button>
+
+        <button
+          type="button"
+          onClick={runFullScan}
+          disabled={scanStatus === 'scanning'}
+          title="Testa as 10 estratégias em todos os ativos (1 dia) e abre o melhor par ativo+estratégia"
+          className="ml-auto text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-900/40 disabled:opacity-50 px-2.5 py-1.5 whitespace-nowrap"
+        >
+          {scanStatus === 'scanning' ? '🔍 Analisando todos os ativos...' : '🔍 Analisar todos os ativos'}
+        </button>
       </div>
+
+      {scanStatus === 'scanning' && (
+        <div className="px-3 sm:px-6 py-1.5 text-xs text-sky-400 flex items-center gap-2 border-b border-slate-800 bg-sky-950/20">
+          <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+          Rodando as 10 estratégias em todos os ativos ({SCAN_DAYS} dia) — isso pode demorar um pouco, continue usando a tela normalmente.
+        </div>
+      )}
+      {scanStatus === 'done' && scanInfo && (
+        <div className="px-3 sm:px-6 py-1 text-[11px] text-slate-500 border-b border-slate-800 bg-slate-950">
+          Varredura: {scanInfo.assetsScanned} ativos em {formatMs(scanInfo.tookMs)}
+          {scanInfo.bestAssetName ? ` — melhor: ${scanInfo.bestAssetName}` : ' — nenhum ativo teve ocorrências suficientes'}.
+        </div>
+      )}
+      {scanStatus === 'error' && (
+        <div className="px-3 sm:px-6 py-1 text-[11px] text-rose-400 border-b border-slate-800 bg-rose-950/20">
+          Falha ao analisar todos os ativos (tente de novo pelo botão).
+        </div>
+      )}
 
       {/* Faixa da melhor estrategia — so aparece quando ha algo pra mostrar, pra nao ocupar
           espaco a toa. */}
       {best === 'loading' && (
         <div className="px-3 sm:px-6 py-1.5 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-800 bg-slate-950">
           <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Testando estratégias...
+          Testando estratégia...
         </div>
       )}
       {best && best !== 'loading' && (
@@ -229,7 +353,7 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Aviso de entrada ao vivo: o setup da melhor estrategia acabou de se completar na
+      {/* Aviso de entrada ao vivo: o setup da estrategia escolhida acabou de se completar na
           ultima vela fechada — a vela se formando agora e a entrada (compra ou venda). */}
       {pendingSignal && (
         <div

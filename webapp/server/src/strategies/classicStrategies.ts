@@ -474,18 +474,23 @@ export function detectPendingSignal(
   return { direction: pending.direction, signalMetricValue: pending.signalMetricValue };
 }
 
-export async function runClassicStrategy(
-  broker: BrokerAdapter,
+/** So o fetch (parte lenta, de rede) — separado do calculo pra poder buscar o historico UMA
+ * vez e rodar varias estrategias em cima do mesmo array (ver runAllClassicStrategiesForAsset). */
+export async function fetchClosedCandles(broker: BrokerAdapter, activeId: number, days: number): Promise<Candle[]> {
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - days * 24 * 60 * 60;
+  return (await broker.getHistoricalCandles(activeId, CANDLE_SIZE_M1, from, now))
+    .filter((c) => c.isClosed)
+    .sort((a, b) => a.from - b.from);
+}
+
+/** So o calculo, a partir de candles ja buscados (ver fetchClosedCandles). */
+export function computeClassicStrategyResult(
+  candles: Candle[],
   activeId: number,
   days: number,
   strategy: ClassicStrategyConfig
-): Promise<ClassicStrategyResult> {
-  const now = Math.floor(Date.now() / 1000);
-  const from = now - days * 24 * 60 * 60;
-  const candles = (await broker.getHistoricalCandles(activeId, CANDLE_SIZE_M1, from, now))
-    .filter((c) => c.isClosed)
-    .sort((a, b) => a.from - b.from);
-
+): ClassicStrategyResult {
   const rawSignals = detectSignals(candles, strategy);
 
   const occurrences: ClassicOccurrence[] = rawSignals.map((s) => {
@@ -526,6 +531,27 @@ export async function runClassicStrategy(
     avgSignalMetricValue: occurrences.length > 0 ? metricSum / occurrences.length : 0,
     reentry: buildReentrySummary(occurrences),
   };
+}
+
+export async function runClassicStrategy(
+  broker: BrokerAdapter,
+  activeId: number,
+  days: number,
+  strategy: ClassicStrategyConfig
+): Promise<ClassicStrategyResult> {
+  const candles = await fetchClosedCandles(broker, activeId, days);
+  return computeClassicStrategyResult(candles, activeId, days, strategy);
+}
+
+/** Roda as 10 estrategias classicas pra um ativo, buscando o historico UMA unica vez. */
+export async function runAllClassicStrategiesForAsset(
+  broker: BrokerAdapter,
+  activeId: number,
+  days: number,
+  strategies: ClassicStrategyConfig[]
+): Promise<ClassicStrategyResult[]> {
+  const candles = await fetchClosedCandles(broker, activeId, days);
+  return strategies.map((strategy) => computeClassicStrategyResult(candles, activeId, days, strategy));
 }
 
 /**
