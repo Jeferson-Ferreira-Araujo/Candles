@@ -33,6 +33,7 @@ import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyI
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
+import { loginWithCredentials } from './auth/polariumHeadlessLogin.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -75,6 +76,25 @@ app.get('/api/auth/status', (req, res) => {
   res.json({ requiresLogin: true, authenticated: isRequestAuthenticated(req) && brokerManager.isReady() });
 });
 
+// Completa o login (cria sessao + cookie + sobe os servicos ao vivo) uma vez que ja temos
+// um SSID valido em maos — usado tanto pelo login manual (cola o SSID) quanto pelo login
+// automatico por email/senha (ve-lo abaixo).
+async function finishLogin(res: import('express').Response): Promise<void> {
+  const token = createSession();
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    // Em producao o client (Vercel) e o server (Render) ficam em dominios diferentes —
+    // isso exige SameSite=None (e Secure, obrigatorio junto com None). Em dev local o
+    // client fala com o server via proxy do Vite (mesma origem), entao Lax basta.
+    sameSite: IS_PRODUCTION ? 'none' : 'lax',
+    secure: IS_PRODUCTION,
+    maxAge: 12 * 60 * 60 * 1000,
+  });
+
+  await ensureLiveServicesStarted();
+  res.json({ ok: true });
+}
+
 app.post('/api/auth/login', async (req, res) => {
   const { ssid } = req.body as { ssid?: string };
   if (!brokerManager.requiresLogin) {
@@ -94,19 +114,41 @@ app.post('/api/auth/login', async (req, res) => {
     return;
   }
 
-  const token = createSession();
-  res.cookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    // Em producao o client (Vercel) e o server (Render) ficam em dominios diferentes —
-    // isso exige SameSite=None (e Secure, obrigatorio junto com None). Em dev local o
-    // client fala com o server via proxy do Vite (mesma origem), entao Lax basta.
-    sameSite: IS_PRODUCTION ? 'none' : 'lax',
-    secure: IS_PRODUCTION,
-    maxAge: 12 * 60 * 60 * 1000,
-  });
+  await finishLogin(res);
+});
 
-  await ensureLiveServicesStarted();
-  res.json({ ok: true });
+// Login direto com email/senha da Polarium: abre um Chromium headless, loga na tela oficial
+// deles e intercepta o SSID da propria conexao WebSocket que a pagina abre — poupa o usuario
+// de ter que ir no DevTools (impraticavel no celular) toda vez que o SSID expira. A senha
+// nunca e persistida: so existe na memoria deste request, pelo tempo do login automatizado.
+app.post('/api/auth/login-credentials', async (req, res) => {
+  const { email, password } = req.body as { email?: string; password?: string };
+  if (!brokerManager.requiresLogin) {
+    res.json({ ok: true });
+    return;
+  }
+  if (!email || !password) {
+    res.status(400).json({ error: 'Informe email e senha.' });
+    return;
+  }
+  let ssid: string;
+  try {
+    ssid = await loginWithCredentials(email.trim(), password);
+  } catch (err) {
+    // NUNCA logar a senha — so a mensagem de erro (ja vem sem a senha, da propria Polarium).
+    console.error('[auth] Falha no login automatico:', err instanceof Error ? err.message : err);
+    res.status(401).json({ error: err instanceof Error ? err.message : 'Nao foi possivel entrar com essas credenciais.' });
+    return;
+  }
+  try {
+    await brokerManager.loginWithSsid(ssid);
+  } catch (err) {
+    console.error('[auth] SSID obtido mas o broker recusou a conexao:', err instanceof Error ? err.message : err);
+    res.status(401).json({ error: 'Login na Polarium funcionou, mas a conexao com o broker falhou. Tente novamente.' });
+    return;
+  }
+
+  await finishLogin(res);
 });
 
 app.post('/api/auth/logout', async (req, res) => {

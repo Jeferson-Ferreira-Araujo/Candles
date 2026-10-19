@@ -75,6 +75,16 @@ export const api = {
       body: JSON.stringify({ ssid }),
     }).then((r) => json<{ ok: true }>(r)),
 
+  // Login automatico (email/senha) — o servidor abre um navegador headless, loga na Polarium
+  // de verdade e extrai o SSID sozinho. Mais lento que colar o SSID (uns 5-10s), mas funciona
+  // de qualquer aparelho, celular incluso, sem precisar de DevTools.
+  loginWithCredentials: (email: string, password: string) =>
+    reqNoRetry('/api/auth/login-credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    }).then((r) => json<{ ok: true }>(r)),
+
   logout: () => req('/api/auth/logout', { method: 'POST' }).then((r) => json<{ ok: true }>(r)),
 
   getSettings: () => req('/api/settings').then((r) => json<Settings>(r)),
