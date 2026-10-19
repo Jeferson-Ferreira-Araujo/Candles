@@ -28,7 +28,11 @@ interface Props {
   /** Tick mais recente (fechado ou ainda em formacao) — atualiza so a ultima vela, sem resetar zoom/posicao. */
   liveCandle?: Candle | null;
   markers?: ChartMarker[];
+  /** Altura fixa em px — ignorado quando `fill` esta ligado. */
   height?: number;
+  /** Em vez de uma altura fixa, ocupa 100% do container pai (que precisa ter altura propria,
+   * ex.: via classe h-[...vh]) — usado na tela "Grafico" pra ocupar a tela toda, estilo corretora. */
+  fill?: boolean;
 }
 
 export interface CandleChartHandle {
@@ -49,7 +53,10 @@ function toCandlestickData(c: Candle): CandlestickData<Time> {
  * novo, o que brigava com o usuario tentando arrastar manualmente pra ver outra parte do
  * grafico — agora a visao SO muda quando o usuario mexe nela ou aperta "Ir para agora".
  */
-export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleChart({ candles, liveCandle, markers, height = 360 }, ref) {
+export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleChart(
+  { candles, liveCandle, markers, height = 360, fill = false },
+  ref
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -58,7 +65,7 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
-      height,
+      ...(fill ? { autoSize: true } : { height }),
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
       timeScale: {
@@ -84,14 +91,19 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
     seriesRef.current = series;
     markersPluginRef.current = markersPlugin;
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width) chart.applyOptions({ width });
-    });
-    resizeObserver.observe(containerRef.current);
+    // Com `fill`, autoSize ja cuida de largura E altura sozinho — so precisamos do
+    // ResizeObserver manual (so largura) no modo de altura fixa (demais telas).
+    let resizeObserver: ResizeObserver | null = null;
+    if (!fill) {
+      resizeObserver = new ResizeObserver((entries) => {
+        const width = entries[0]?.contentRect.width;
+        if (width) chart.applyOptions({ width });
+      });
+      resizeObserver.observe(containerRef.current);
+    }
 
     return () => {
-      resizeObserver.disconnect();
+      resizeObserver?.disconnect();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -133,5 +145,5 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
     goToRealTime: () => chartRef.current?.timeScale().scrollToRealTime(),
   }));
 
-  return <div ref={containerRef} className="w-full" />;
+  return <div ref={containerRef} className={fill ? 'w-full h-full' : 'w-full'} />;
 });

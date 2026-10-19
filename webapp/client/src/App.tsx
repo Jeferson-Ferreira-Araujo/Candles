@@ -46,11 +46,12 @@ export default function App() {
           )
         }
       >
-        <Route index element={<MonitorPage />} />
+        <Route index element={<ChartPage />} />
+        <Route path="monitor" element={<MonitorPage />} />
         <Route path="pattern" element={<PatternBuilderPage />} />
         <Route path="pattern-discovery" element={<PatternDiscoveryPage />} />
         <Route path="classic-strategies" element={<ClassicStrategiesPage />} />
-        <Route path="chart" element={<ChartPage />} />
+        <Route path="chart" element={<Navigate to="/" replace />} />
         <Route path="backtest" element={<BacktestPage />} />
         <Route path="operations" element={<OperationsPage />} />
         <Route path="settings" element={<SettingsPage />} />

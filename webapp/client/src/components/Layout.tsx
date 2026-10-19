@@ -6,11 +6,11 @@ import { api } from '../api.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Monitor', hint: 'Tempo real', icon: '📈' },
+  { to: '/', label: 'Gráfico', hint: 'Tempo real', icon: '📊' },
+  { to: '/monitor', label: 'Monitor', hint: 'Eventos ao vivo', icon: '📈' },
   { to: '/pattern', label: 'Padrão', hint: 'Editor de padrão', icon: '🕯️' },
   { to: '/pattern-discovery', label: 'Descobrir', hint: 'Identificar padrões', icon: '🔎' },
   { to: '/classic-strategies', label: 'Clássicas', hint: 'Estratégias clássicas', icon: '📐' },
-  { to: '/chart', label: 'Gráfico', hint: 'Velas em tempo real', icon: '📊' },
   { to: '/backtest', label: 'Validação 30D', hint: 'Histórico da estratégia', icon: '🗓️' },
   { to: '/operations', label: 'Operações', hint: 'Sinais e resultados', icon: '📋' },
   { to: '/settings', label: 'Configurações', hint: 'Robô e risco', icon: '⚙️' },
@@ -120,7 +120,13 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
           </div>
         </nav>
 
-        <main className="flex-1 min-w-0 p-4 sm:p-6 pb-20 sm:pb-6 bg-slate-950 overflow-x-hidden">
+        {/* A pagina inicial (grafico) cuida do proprio espacamento pra ficar "tela cheia", igual
+            corretora — as outras paginas mantem o padding padrao de sempre. */}
+        <main
+          className={`flex-1 min-w-0 bg-slate-950 overflow-x-hidden ${
+            location.pathname === '/' ? 'pb-16 sm:pb-0' : 'p-4 sm:p-6 pb-20 sm:pb-6'
+          }`}
+        >
           <Outlet context={{ events, settings, refreshHeader: refresh }} />
         </main>
       </div>

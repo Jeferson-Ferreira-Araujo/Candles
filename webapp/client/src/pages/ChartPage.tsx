@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetInfo, Candle } from '@polarium12c/shared';
 import { api } from '../api.js';
-import { AssetBadgePicker } from '../components/AssetBadgePicker.js';
 import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
 import { findBestStrategy, type BestStrategyResult } from '../lib/bestStrategyFinder.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
@@ -12,16 +11,20 @@ function formatPct(p: number): string {
   return `${(p * 100).toFixed(1)}%`;
 }
 
+function formatPrice(p: number): string {
+  return p.toFixed(5);
+}
+
 /**
- * Tela "Gráfico", no estilo das corretoras: escolhe um ativo, carrega o candlestick real
- * (histórico) e o servidor passa a transmitir esse ativo ao vivo (POST /api/chart-stream) —
- * as velas se movem na tela sem precisar que o ativo esteja entre os monitorados nem que haja
- * um padrão/estratégia ativa, é só pra visualização. Também mostra, sobrepostos no gráfico, os
- * sinais da estratégia que teve a melhor taxa de acerto nos testes (entre as 10 clássicas e o
- * padrão customizado ativo) para esse ativo no período escolhido.
+ * Tela inicial do app: grafico de candlestick real em tempo real, estilo corretora — escolhe
+ * um ativo (pelo seletor ou pela lista lateral), ve as velas se movendo ao vivo, com os sinais
+ * da melhor estrategia testada sobrepostos. A barra inferior (preco, Comprar/Vender) e so
+ * visual, pra ficar parecido com a tela que o usuario ja conhece — este app nunca envia ordem
+ * nenhuma (ver README: so monitora e sugere, quem decide e executa e sempre o usuario).
  */
 export function ChartPage() {
   const [assets, setAssets] = useState<AssetInfo[]>([]);
+  const [assetFilter, setAssetFilter] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [days, setDays] = useState(DEFAULT_DAYS);
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -36,7 +39,10 @@ export function ChartPage() {
   const chartRef = useRef<CandleChartHandle>(null);
 
   useEffect(() => {
-    api.getAssets().then(setAssets).catch(() => {});
+    api.getAssets().then((list) => {
+      setAssets(list);
+      setSelectedAssetId((current) => current ?? list[0]?.id ?? null);
+    }).catch(() => {});
   }, []);
 
   // Para a transmissao ao sair da tela (sem isso, o servidor continuaria assinado no ultimo
@@ -65,23 +71,21 @@ export function ChartPage() {
 
   const isLive = lastCandleUpdate !== null && lastCandleUpdate.activeId === watchingAssetId;
 
-  function nameOf(id: number): string {
+  function nameOf(id: number | null): string {
+    if (id === null) return '';
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
   }
 
-  async function loadChart() {
-    if (selectedAssetId === null) {
-      setChartError('Selecione um ativo antes de carregar o gráfico.');
-      return;
-    }
+  async function loadChartFor(assetId: number) {
+    setSelectedAssetId(assetId);
     setChartError(null);
     setLoadingChart(true);
     setBest('loading');
     setLiveCandle(null);
     try {
-      const [data] = await Promise.all([api.getCandles(selectedAssetId, days), api.watchChartAsset(selectedAssetId)]);
+      const [data] = await Promise.all([api.getCandles(assetId, days), api.watchChartAsset(assetId)]);
       setCandles(data);
-      setWatchingAssetId(selectedAssetId);
+      setWatchingAssetId(assetId);
     } catch (err) {
       setChartError(err instanceof Error ? err.message : String(err));
       setCandles([]);
@@ -91,104 +95,186 @@ export function ChartPage() {
     }
 
     try {
-      const result = await findBestStrategy(selectedAssetId, days);
+      const result = await findBestStrategy(assetId, days);
       setBest(result);
     } catch {
       setBest(null);
     }
   }
 
+  function loadChart() {
+    if (selectedAssetId === null) {
+      setChartError('Selecione um ativo antes de carregar o gráfico.');
+      return;
+    }
+    loadChartFor(selectedAssetId);
+  }
+
   const markers: ChartMarker[] = best && best !== 'loading' ? best.markers : [];
+  const currentPrice = liveCandle?.close ?? candles[candles.length - 1]?.close ?? null;
+  const filteredAssets = useMemo(() => {
+    const q = assetFilter.trim().toLowerCase();
+    if (!q) return assets;
+    return assets.filter((a) => a.name.toLowerCase().includes(q));
+  }, [assets, assetFilter]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl sm:text-2xl font-bold">Gráfico</h1>
-        <p className="text-slate-400 text-sm">
-          Escolha um ativo e veja o candlestick real se movendo ao vivo, igual na corretora — mais os sinais da
-          estratégia que teve melhor taxa de acerto nos testes para ele.
-        </p>
-      </div>
+    <div className="flex flex-col">
+      {/* Barra superior: escolha de ativo + periodo, compacta, sempre visivel. */}
+      <div className="px-3 sm:px-6 py-2.5 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
+        <select
+          value={selectedAssetId ?? ''}
+          onChange={(e) => setSelectedAssetId(Number(e.target.value))}
+          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm min-w-[140px]"
+        >
+          {assets.length === 0 && <option value="">Carregando...</option>}
+          {assets.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+              {a.isOtc ? ' (OTC)' : ''}
+            </option>
+          ))}
+        </select>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 space-y-3">
-        <div>
-          <div className="text-xs text-slate-500 mb-2">Ativo</div>
-          <AssetBadgePicker
-            assets={assets}
-            value={selectedAssetId !== null ? [selectedAssetId] : []}
-            onChange={(ids) => setSelectedAssetId(ids.length > 0 ? ids[ids.length - 1]! : null)}
+        <label className="flex items-center gap-1.5 text-xs text-slate-400">
+          Dias
+          <input
+            type="number"
+            min={1}
+            value={days}
+            onChange={(e) => setDays(Math.max(1, Number(e.target.value)))}
+            className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm w-16"
           />
+        </label>
+
+        <button
+          onClick={loadChart}
+          disabled={loadingChart}
+          className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-semibold"
+        >
+          {loadingChart ? 'Carregando...' : 'Carregar'}
+        </button>
+
+        <div className="flex items-center gap-2 ml-0 sm:ml-2">
+          {watchingAssetId !== null &&
+            (isLive ? (
+              <span className="flex items-center gap-1 text-xs font-medium text-rose-400">
+                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-slate-500">
+                <span className="h-2 w-2 rounded-full bg-slate-600" /> aguardando tick...
+              </span>
+            ))}
         </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Dias</label>
-            <input
-              type="number"
-              min={1}
-              value={days}
-              onChange={(e) => setDays(Math.max(1, Number(e.target.value)))}
-              className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm w-24"
-            />
-          </div>
-          <button
-            onClick={loadChart}
-            disabled={loadingChart}
-            className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
-          >
-            {loadingChart ? 'Carregando...' : 'Carregar gráfico'}
-          </button>
-        </div>
-        {chartError && <div className="text-xs text-rose-400">{chartError}</div>}
+
+        <button
+          type="button"
+          onClick={() => chartRef.current?.goToRealTime()}
+          className="ml-auto text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5"
+        >
+          ⏭ Ir para agora
+        </button>
       </div>
 
+      {/* Faixa da melhor estrategia — so aparece quando ha algo pra mostrar, pra nao ocupar
+          espaco a toa. */}
       {best === 'loading' && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-400 flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Testando as 10 estratégias clássicas + o padrão ativo pra achar a melhor...
+        <div className="px-3 sm:px-6 py-1.5 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-800 bg-slate-950">
+          <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+          Testando estratégias...
         </div>
       )}
       {best && best !== 'loading' && (
-        <div className="rounded-xl border border-emerald-800 bg-emerald-950/30 p-4 flex items-center gap-4 flex-wrap text-sm">
-          <div className="font-semibold text-emerald-300">⭐ Melhor estratégia testada: {best.name}</div>
+        <div className="px-3 sm:px-6 py-1.5 flex items-center gap-3 flex-wrap text-xs border-b border-slate-800 bg-emerald-950/20">
+          <span className="font-semibold text-emerald-300">⭐ {best.name}</span>
           <span className="text-emerald-400">{best.wins}W</span>
           <span className="text-rose-400">{best.losses}L</span>
-          {best.dojis > 0 && <span className="text-slate-400">{best.dojis}D</span>}
           <span className="font-semibold text-white">{formatPct(best.winRate)}</span>
         </div>
       )}
-      {best === null && candles.length > 0 && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-400">
-          Nenhuma estratégia teve ocorrências suficientes nesse período para comparar.
-        </div>
+      {chartError && (
+        <div className="px-3 sm:px-6 py-1.5 text-xs text-rose-400 border-b border-slate-800 bg-rose-950/20">{chartError}</div>
       )}
 
-      {candles.length > 0 && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <div className="text-sm font-semibold mb-2 flex items-center gap-2">
-            <span>
-              {selectedAssetId !== null ? nameOf(selectedAssetId) : ''} — {candles.length} velas M1
-            </span>
-            {watchingAssetId !== null &&
-              (isLive ? (
-                <span className="flex items-center gap-1 text-xs font-medium text-rose-400">
-                  <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-xs text-slate-500">
-                  <span className="h-2 w-2 rounded-full bg-slate-600" /> aguardando o próximo tick...
-                </span>
-              ))}
-            <button
-              type="button"
-              onClick={() => chartRef.current?.goToRealTime()}
-              className="ml-auto text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2 py-1"
-            >
-              ⏭ Ir para agora
-            </button>
-          </div>
-          <CandleChart ref={chartRef} candles={candles} liveCandle={liveCandle} markers={markers} />
+      {/* Grafico + lista lateral de ativos, igual corretora. */}
+      <div className="flex">
+        <div className="flex-1 min-w-0 h-[58vh] sm:h-[66vh]">
+          {candles.length > 0 ? (
+            <CandleChart ref={chartRef} candles={candles} liveCandle={liveCandle} markers={markers} fill />
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-slate-500 px-4 text-center">
+              {loadingChart ? 'Carregando velas...' : 'Escolha um ativo e toque em "Carregar" para ver o gráfico.'}
+            </div>
+          )}
         </div>
-      )}
+
+        <div className="w-[88px] sm:w-44 shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col">
+          <div className="hidden sm:block p-2 border-b border-slate-800">
+            <input
+              value={assetFilter}
+              onChange={(e) => setAssetFilter(e.target.value)}
+              placeholder="Filtrar..."
+              className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs"
+            />
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {filteredAssets.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => loadChartFor(a.id)}
+                className={`w-full text-left px-2 py-2 border-b border-slate-900 transition-colors ${
+                  a.id === watchingAssetId ? 'bg-slate-800' : 'hover:bg-slate-900'
+                }`}
+                title={a.name}
+              >
+                <div className="text-[11px] sm:text-xs font-medium truncate">{a.name}</div>
+                {a.isOtc && <div className="text-[9px] sm:text-[10px] text-amber-500">OTC</div>}
+              </button>
+            ))}
+            {assets.length > 0 && filteredAssets.length === 0 && (
+              <div className="p-2 text-[10px] text-slate-500">Nenhum ativo.</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Barra inferior estilo corretora — so visual: este app nunca envia ordem nenhuma, os
+          botoes Comprar/Vender nao fazem nada ao clicar. */}
+      <div className="border-t border-slate-800 bg-slate-950 px-3 sm:px-6 py-3 flex items-center gap-3 sm:gap-6 flex-wrap">
+        <button
+          type="button"
+          title="Este app apenas monitora — não envia ordens."
+          className="order-2 sm:order-1 flex-1 sm:flex-none rounded-lg bg-rose-700/90 hover:bg-rose-600/90 px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide"
+        >
+          VENDER
+        </button>
+        <button
+          type="button"
+          title="Este app apenas monitora — não envia ordens."
+          className="order-3 sm:order-2 flex-1 sm:flex-none rounded-lg bg-emerald-700/90 hover:bg-emerald-600/90 px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide"
+        >
+          COMPRAR
+        </button>
+
+        <div className="order-1 sm:order-3 w-full sm:w-auto flex items-center gap-4 text-xs text-slate-400 sm:ml-4">
+          <div>
+            <div className="text-slate-500">Ativo</div>
+            <div className="text-slate-200 font-medium">{nameOf(selectedAssetId) || '—'}</div>
+          </div>
+          <div>
+            <div className="text-slate-500">Preço</div>
+            <div className="text-slate-200 font-medium">{currentPrice !== null ? formatPrice(currentPrice) : '—'}</div>
+          </div>
+          {best && best !== 'loading' && (
+            <div>
+              <div className="text-slate-500">Taxa de acerto</div>
+              <div className="text-emerald-400 font-semibold">{formatPct(best.winRate)}</div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
