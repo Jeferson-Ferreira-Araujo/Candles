@@ -242,7 +242,11 @@ export class PolariumAdapter implements BrokerAdapter {
       );
       return null;
     }
-    return percent;
+    // A SDK devolve PONTOS PERCENTUAIS (ex.: 90 = 90%), nao uma fracao — confirmado lendo a
+    // implementacao real (profitPercent faz "* 100" na conta). O resto do app (SafetyGate,
+    // OrderRecord.payoutPercentage, estimativas de ganho na tela) espera fracao (0.90), entao
+    // normaliza aqui, no unico lugar que conhece essa unidade.
+    return percent / 100;
   }
 
   /**

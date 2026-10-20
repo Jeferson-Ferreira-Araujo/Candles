@@ -364,10 +364,14 @@ export function ChartPage() {
     }
     setOrderStatus('placing');
     setOrderMessage(null);
-    // Preco e vela "agora", capturados ANTES do await — sao o preco/tempo reais do clique, nao
-    // de quando a resposta do servidor chegar.
+    // Preco "agora", capturado ANTES do await — e o preco real do clique, nao de quando a
+    // resposta do servidor chegar. Expiracao SEMPRE calculada do relogio (proximo fechamento
+    // de minuto, M1), nunca de `liveCandle.to` — que pode estar parado na ultima vela que JA
+    // fechou (ex.: clique logo apos um CANDLE_CLOSED, antes do proximo tick CANDLE_UPDATED
+    // chegar), fazendo a contagem regressiva nascer zerada em vez de contar os ~60s reais.
     const entryPrice = liveCandle?.close ?? candles[candles.length - 1]?.close ?? null;
-    const expiresAt = liveCandle?.to ?? Math.floor(Date.now() / 1000) + 60;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresAt = (Math.floor(nowSec / 60) + 1) * 60;
     try {
       const outcome = await api.placeManualOrder(watchingAssetId, direction);
       if (outcome.allowed) {
