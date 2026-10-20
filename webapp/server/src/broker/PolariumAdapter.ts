@@ -318,17 +318,28 @@ export class PolariumAdapter implements BrokerAdapter {
     const positions = await sdk.positions();
     const orderIdNum = Number(brokerOrderId);
 
-    const position = positions.getOpenedPositions().find((p) => positions.isOrderMatchingPosition(orderIdNum, p));
-    if (!position) {
-      // TODO(confirmar): mesma ressalva do getOrder() — falta confirmar a leitura via
-      // getPositionsHistory() para posicoes ja fechadas/expiradas.
+    const open = positions.getOpenedPositions().find((p) => positions.isOrderMatchingPosition(orderIdNum, p));
+    if (open) {
+      if (open.pnlRealized === undefined) return null; // ainda aberta, sem resultado
+      const pnl = open.pnlRealized;
+      return { result: pnl > 0 ? 'WIN' : pnl < 0 ? 'LOSS' : 'DOJI', pnl };
+    }
+
+    // Nao esta mais entre as posicoes ABERTAS — ou ja fechou, ou ainda nao chegou a abrir.
+    // getPositionHistory(externalId) e o metodo real e confirmado da SDK pra consultar o
+    // historico por ID — usa o mesmo numero que isOrderMatchingPosition casa contra
+    // position.orderIds nas posicoes abertas, entao e o mesmo ID aqui.
+    let closed;
+    try {
+      closed = await positions.getPositionsHistory().getPositionHistory(orderIdNum);
+    } catch (err) {
+      console.error(`[getOrderResult] erro consultando historico de posicoes (orderId ${orderIdNum}):`, err);
       return null;
     }
-    if (position.pnlRealized === undefined) return null; // ainda nao resolvida
+    if (!closed || closed.pnlRealized === undefined) return null; // ainda nao apareceu no historico
 
-    const pnl = position.pnlRealized;
-    const result = pnl > 0 ? 'WIN' : pnl < 0 ? 'LOSS' : 'DOJI';
-    return { result, pnl };
+    const pnl = closed.pnlRealized;
+    return { result: pnl > 0 ? 'WIN' : pnl < 0 ? 'LOSS' : 'DOJI', pnl };
   }
 
   async disconnect(): Promise<void> {

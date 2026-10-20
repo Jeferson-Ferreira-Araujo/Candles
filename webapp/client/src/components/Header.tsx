@@ -64,14 +64,14 @@ export function Header({
           Saldo {mode !== 'OBSERVATION' ? `(${mode})` : ''}
         </div>
         <div className="font-semibold whitespace-nowrap">
-          {balance === null ? '—' : balance.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' })}
+          {balance === null ? '—' : balance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
         </div>
       </div>
 
       <div>
         <div className="text-xs text-slate-500">Resultado do dia</div>
         <div className={`font-semibold whitespace-nowrap ${pnlColor}`}>
-          {dailyResult ? pnl.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : '—'}
+          {dailyResult ? pnl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}
         </div>
       </div>
 

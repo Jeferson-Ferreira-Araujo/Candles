@@ -187,15 +187,6 @@ export async function listOrders(db: Db, limit = 200): Promise<OrderRecord[]> {
   return rows.map(rowToOrder);
 }
 
-/** True se existe alguma ordem para este ativo ainda sem resultado (aberta ou de status desconhecido). */
-export async function hasPendingOrderForActive(db: Db, activeId: number): Promise<boolean> {
-  const { rows } = await db.query(
-    `SELECT COUNT(*) as n FROM orders WHERE active_id = $1 AND status IN ('REQUESTED', 'CONFIRMED', 'UNKNOWN')`,
-    [activeId]
-  );
-  return Number(rows[0].n) > 0;
-}
-
 export async function listUnknownOrders(db: Db): Promise<OrderRecord[]> {
   const { rows } = await db.query(`SELECT * FROM orders WHERE status = 'UNKNOWN'`);
   return rows.map(rowToOrder);

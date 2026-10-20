@@ -29,7 +29,6 @@ function baseContext(overrides: Partial<SafetyContext> = {}): SafetyContext {
     stopLossDaily: null,
     maxOperationsPerDay: null,
     dailyResult,
-    hasPendingOrderForActive: false,
     orderAlreadyExistsForSignal: false,
     ...overrides,
   };
@@ -119,11 +118,6 @@ describe('SafetyGate — na duvida, nao operar', () => {
       baseContext({ maxOperationsPerDay: 20, dailyResult: { ...baseContext().dailyResult, operationsCount: 20 } })
     );
     expect(result.blockedBy).toContain('MAX_OPERATIONS_REACHED');
-  });
-
-  it('bloqueia quando ja existe ordem pendente para o mesmo ativo', () => {
-    const result = evaluateSafety(baseContext({ hasPendingOrderForActive: true }));
-    expect(result.blockedBy).toContain('PENDING_ORDER_EXISTS');
   });
 
   it('bloqueia sinal duplicado (ordem ja existe para este signalId)', () => {

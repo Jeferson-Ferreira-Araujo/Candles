@@ -120,22 +120,22 @@ describe('OrderService', () => {
     expect(Number(rows[0].n)).toBe(1);
   });
 
-  it('ordem pendente no mesmo ativo bloqueia um novo sinal ate a primeira resolver', async () => {
+  it('permite uma 2a ordem no MESMO ativo antes da primeira resolver (a Polarium aceita posicoes simultaneas)', async () => {
     const { db, broker, service } = await setup();
     const window1 = buildWindow(1_800_040_000);
     for (const c of window1) broker.pushLiveCandle(ACTIVE, c);
     await service.handleConfirmed(ACTIVE, window1, 0.5, DIRECTION);
 
-    // Segundo "sinal" no MESMO ativo antes da primeira ordem resolver.
+    // Segundo "sinal" no MESMO ativo antes da primeira ordem resolver — nao deve ser bloqueado.
     const window2 = buildWindow(1_800_050_000);
     for (const c of window2) broker.pushLiveCandle(ACTIVE, c);
     await service.handleConfirmed(ACTIVE, window2, 0.5, DIRECTION);
 
     const signalId2 = `12CANDLES-${ACTIVE}-${window2[window2.length - 1]!.to}-PUT`;
-    expect((await getSignal(db, signalId2))?.status).toBe('BLOCKED');
+    expect((await getSignal(db, signalId2))?.status).toBe('ORDER_CONFIRMED');
 
     const { rows } = await db.query('SELECT COUNT(*) as n FROM orders');
-    expect(Number(rows[0].n)).toBe(1);
+    expect(Number(rows[0].n)).toBe(2);
   });
 
   it('Stop Loss diario bloqueia novos sinais depois de atingido', async () => {

@@ -88,7 +88,7 @@ export function OperationsPage() {
                   <td className="py-1.5 pr-4">{nameOf(o.activeId)}</td>
                   <td className="py-1.5 pr-4">{o.direction}</td>
                   <td className="py-1.5 pr-4 text-slate-400">{o.galeLevel > 0 ? `Gale ${o.galeLevel}` : '—'}</td>
-                  <td className="py-1.5 pr-4">{o.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' })}</td>
+                  <td className="py-1.5 pr-4">{o.amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                   <td className="py-1.5 pr-4">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded ${STATUS_STYLES[o.status]}`}>{o.status}</span>
                   </td>
@@ -96,7 +96,7 @@ export function OperationsPage() {
                     {o.result ?? '—'}
                   </td>
                   <td className="py-1.5 pr-4">
-                    {o.pnl !== undefined ? o.pnl.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : '—'}
+                    {o.pnl !== undefined ? o.pnl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}
                   </td>
                 </tr>
               ))}

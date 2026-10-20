@@ -8,7 +8,6 @@ import {
   getDailyResult,
   getOrderBySignalId,
   getSignal,
-  hasPendingOrderForActive,
   insertEvent,
   insertOrderIfAbsent,
   saveDailyResult,
@@ -256,7 +255,6 @@ export class OrderService extends EventEmitter {
       stopLossDaily: settings.stopLossDaily,
       maxOperationsPerDay: settings.maxOperationsPerDay,
       dailyResult: await getDailyResult(this.db, todayIso()),
-      hasPendingOrderForActive: await hasPendingOrderForActive(this.db, activeId),
       orderAlreadyExistsForSignal: (await getOrderBySignalId(this.db, signalId)) !== undefined,
     };
   }

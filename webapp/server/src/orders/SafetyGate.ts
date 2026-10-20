@@ -29,8 +29,6 @@ export interface SafetyContext {
   stopLossDaily: number | null;
   maxOperationsPerDay: number | null;
   dailyResult: DailyResult;
-  /** True se ja existe uma ordem em aberto (nao resolvida) para o MESMO ativo. */
-  hasPendingOrderForActive: boolean;
   /** True se ja existe uma ordem para este signalId (protecao contra duplicidade). */
   orderAlreadyExistsForSignal: boolean;
 }
@@ -48,8 +46,7 @@ export type SafetyBlockReason =
   | 'INSUFFICIENT_BALANCE'
   | 'STOP_WIN_REACHED'
   | 'STOP_LOSS_REACHED'
-  | 'MAX_OPERATIONS_REACHED'
-  | 'PENDING_ORDER_EXISTS';
+  | 'MAX_OPERATIONS_REACHED';
 
 export interface SafetyResult {
   allowed: boolean;
@@ -85,8 +82,6 @@ export function evaluateSafety(ctx: SafetyContext): SafetyResult {
   if (ctx.maxOperationsPerDay !== null && ctx.dailyResult.operationsCount >= ctx.maxOperationsPerDay) {
     blockedBy.push('MAX_OPERATIONS_REACHED');
   }
-
-  if (ctx.hasPendingOrderForActive) blockedBy.push('PENDING_ORDER_EXISTS');
 
   return { allowed: blockedBy.length === 0, blockedBy };
 }

@@ -30,7 +30,7 @@ function formatMs(ms: number): string {
 }
 
 function formatMoney(v: number): string {
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' });
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 function formatCountdown(seconds: number): string {
@@ -89,6 +89,7 @@ export function ChartPage() {
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
+  const [resultToast, setResultToast] = useState<{ status: 'WIN' | 'LOSS' | 'DOJI'; pnl?: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [watchlistSignals, setWatchlistSignals] = useState<Record<number, WatchlistEntry & { direction: Direction }>>({});
   const { events, lastCandleUpdate } = useLiveSocket();
@@ -293,8 +294,19 @@ export function ChartPage() {
     if (last.type !== 'WIN' && last.type !== 'LOSS' && last.type !== 'DOJI') return;
     const payload = last.payload as { signalId?: string; pnl?: number };
     if (payload.signalId !== activeOrder.signalId) return;
-    setActiveOrder((prev) => (prev ? { ...prev, status: last.type as 'WIN' | 'LOSS' | 'DOJI', pnl: payload.pnl } : prev));
+    const status = last.type as 'WIN' | 'LOSS' | 'DOJI';
+    setActiveOrder((prev) => (prev ? { ...prev, status, pnl: payload.pnl } : prev));
+    // Aviso igual ao do site oficial: o resultado chega so quando a corretora confirma (poll
+    // em segundo plano), entao sem isso o usuario so saberia pelo proprio app da Polarium.
+    setResultToast({ status, pnl: payload.pnl });
   }, [events, activeOrder]);
+
+  // Fecha o aviso de resultado sozinho depois de um tempo — nao fica preso na tela.
+  useEffect(() => {
+    if (!resultToast) return;
+    const id = setTimeout(() => setResultToast(null), 6000);
+    return () => clearTimeout(id);
+  }, [resultToast]);
 
   // Tick da vela AINDA EM FORMACAO (CANDLE_UPDATED) — e o que faz o grafico "se mexer" em
   // tempo real dentro do minuto, nao so quando uma vela fecha.
@@ -410,6 +422,19 @@ export function ChartPage() {
       text: 'ENTRADA',
     });
   }
+  // Entrada manual resolvida: marca a propria vela de entrada (M1 = 60s antes da expiracao)
+  // com o resultado e o valor, igual aos marcadores WIN/LOSS da estrategia.
+  if (activeOrder && activeOrder.status !== 'OPEN') {
+    const entryCandleFrom = activeOrder.expiresAt - 60;
+    const pnlText = activeOrder.pnl !== undefined ? ` ${activeOrder.pnl >= 0 ? '+' : ''}${formatMoney(activeOrder.pnl)}` : '';
+    markers.push({
+      time: entryCandleFrom,
+      position: activeOrder.direction === 'CALL' ? 'belowBar' : 'aboveBar',
+      color: activeOrder.status === 'WIN' ? '#22c55e' : activeOrder.status === 'LOSS' ? '#f43f5e' : '#94a3b8',
+      shape: activeOrder.status === 'WIN' ? 'arrowUp' : activeOrder.status === 'LOSS' ? 'arrowDown' : 'circle',
+      text: `${activeOrder.status}${pnlText}`,
+    });
+  }
   const currentPrice = liveCandle?.close ?? candles[candles.length - 1]?.close ?? null;
 
   // Derivados pra exibir a entrada manual em acompanhamento (linha no grafico + faixa de
@@ -466,6 +491,29 @@ export function ChartPage() {
 
   return (
     <div className="flex flex-col">
+      {/* Notificacao de resultado — igual ao site oficial, aparece flutuando por cima de tudo
+          quando a corretora confirma o fechamento da entrada, some sozinha depois de alguns
+          segundos. Nao depende do usuario estar olhando a faixa de status pra saber o resultado. */}
+      {resultToast && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50">
+          <div
+            className={`px-4 py-2.5 rounded-xl shadow-lg border font-bold text-sm flex items-center gap-2 ${
+              resultToast.status === 'WIN'
+                ? 'bg-emerald-600 border-emerald-400 text-white'
+                : resultToast.status === 'LOSS'
+                  ? 'bg-rose-600 border-rose-400 text-white'
+                  : 'bg-slate-700 border-slate-500 text-white'
+            }`}
+          >
+            <span className="text-base">{resultToast.status === 'WIN' ? '✅' : resultToast.status === 'LOSS' ? '❌' : '➖'}</span>
+            {resultToast.status === 'WIN' ? 'GANHOU' : resultToast.status === 'LOSS' ? 'PERDEU' : 'EMPATOU'}
+            {resultToast.pnl !== undefined && (
+              <span>{resultToast.pnl >= 0 ? `+${formatMoney(resultToast.pnl)}` : formatMoney(resultToast.pnl)}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Barra superior: escolha de ativo + estrategia + periodo, compacta, sempre visivel. */}
       <div className="px-3 sm:px-6 py-2 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
         <select
