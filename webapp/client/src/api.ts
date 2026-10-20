@@ -185,7 +185,9 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activeId, direction }),
-    }).then((r) => json<{ allowed: boolean; blockedBy: string[]; signalId: string }>(r)),
+    }).then((r) =>
+      json<{ allowed: boolean; blockedBy: string[]; signalId: string; amount: number; payoutPercentage: number | null }>(r)
+    ),
 
   setWatchlist: (entries: WatchlistEntry[]) =>
     req('/api/watchlist', {

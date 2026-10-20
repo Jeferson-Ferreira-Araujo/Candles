@@ -2,10 +2,12 @@ import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
 import {
   CandlestickSeries,
   ColorType,
+  LineStyle,
   createChart,
   createSeriesMarkers,
   type CandlestickData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
@@ -13,6 +15,13 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle } from '@polarium12c/shared';
+
+export interface ActiveOrderLine {
+  /** Preco no momento da entrada — onde a linha tracejada e desenhada. */
+  entryPrice: number;
+  /** 'WIN' | 'LOSS' | 'DOJI' colore a linha pelo resultado final; null = ainda em aberto. */
+  result: 'WIN' | 'LOSS' | 'DOJI' | null;
+}
 
 export interface ChartMarker {
   time: number; // epoch seconds (candle.from do candle marcado)
@@ -28,6 +37,8 @@ interface Props {
   /** Tick mais recente (fechado ou ainda em formacao) — atualiza so a ultima vela, sem resetar zoom/posicao. */
   liveCandle?: Candle | null;
   markers?: ChartMarker[];
+  /** Entrada em aberto/recem-resolvida — desenha uma linha tracejada no preco de entrada. null = nenhuma. */
+  activeOrder?: ActiveOrderLine | null;
   /** Altura fixa em px — ignorado quando `fill` esta ligado. */
   height?: number;
   /** Em vez de uma altura fixa, ocupa 100% do container pai (que precisa ter altura propria,
@@ -57,13 +68,14 @@ function toCandlestickData(c: Candle): CandlestickData<Time> {
  * grafico — agora a visao SO muda quando o usuario mexe nela ou aperta "Ir para agora".
  */
 export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleChart(
-  { candles, liveCandle, markers, height = 360, fill = false },
+  { candles, liveCandle, markers, activeOrder, height = 360, fill = false },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const activeOrderLineRef = useRef<IPriceLine | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -143,6 +155,29 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
     }));
     markersPluginRef.current.setMarkers(seriesMarkers);
   }, [markers]);
+
+  // Linha tracejada no preco de entrada da ordem ativa — cinza enquanto aberta, verde/vermelha
+  // quando o resultado chega. Removida quando activeOrder vira null (nova entrada ou saida da tela).
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    if (activeOrderLineRef.current) {
+      series.removePriceLine(activeOrderLineRef.current);
+      activeOrderLineRef.current = null;
+    }
+
+    if (!activeOrder) return;
+    const color = activeOrder.result === 'WIN' ? '#22c55e' : activeOrder.result === 'LOSS' ? '#f43f5e' : '#facc15';
+    activeOrderLineRef.current = series.createPriceLine({
+      price: activeOrder.entryPrice,
+      color,
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'Entrada',
+    });
+  }, [activeOrder]);
 
   useImperativeHandle(ref, () => ({
     goToRealTime: () => chartRef.current?.timeScale().scrollToRealTime(),

@@ -29,6 +29,9 @@ export interface PlaceOrderOutcome {
   allowed: boolean;
   blockedBy: SafetyBlockReason[];
   signalId: string;
+  amount: number;
+  /** Payout usado na checagem de seguranca desta entrada (fracao, ex.: 0.85) — null se bloqueada antes de ser conhecido. */
+  payoutPercentage: number | null;
 }
 
 function todayIso(): string {
@@ -114,8 +117,17 @@ export class OrderService extends EventEmitter {
     });
 
     const settings = await this.getSettings();
-    const blockedBy = await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings, true);
-    return { allowed: blockedBy.length === 0, blockedBy, signalId };
+    const { blockedBy, payoutPercentage } = await this.executeOrder(
+      signalId,
+      signalId,
+      activeId,
+      direction,
+      settings.entryAmount,
+      0,
+      settings,
+      true
+    );
+    return { allowed: blockedBy.length === 0, blockedBy, signalId, amount: settings.entryAmount, payoutPercentage };
   }
 
   /**
@@ -133,14 +145,14 @@ export class OrderService extends EventEmitter {
     galeLevel: number,
     settings: Settings,
     isManualOrder: boolean
-  ): Promise<SafetyBlockReason[]> {
+  ): Promise<{ blockedBy: SafetyBlockReason[]; payoutPercentage: number | null }> {
     const context = await this.buildSafetyContext(activeId, signalId, amount, settings, isManualOrder);
     const safety = evaluateSafety(context);
 
     if (!safety.allowed) {
       await updateSignalStatus(this.db, signalId, 'BLOCKED');
       this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, galeLevel, blockedBy: safety.blockedBy });
-      return safety.blockedBy;
+      return { blockedBy: safety.blockedBy, payoutPercentage: context.payoutPercentage };
     }
 
     const orderId = randomUUID();
@@ -156,7 +168,7 @@ export class OrderService extends EventEmitter {
       requestedAt: Date.now(),
       mode: settings.mode,
     });
-    if (!inserted) return []; // outra chamada concorrente ja criou a ordem para este sinal
+    if (!inserted) return { blockedBy: [], payoutPercentage: context.payoutPercentage }; // outra chamada concorrente ja criou a ordem para este sinal
 
     await updateSignalStatus(this.db, signalId, 'ORDER_REQUESTED');
     this.emitEvent('ORDER_REQUESTED', activeId, { signalId, orderId, amount, galeLevel });
@@ -186,7 +198,7 @@ export class OrderService extends EventEmitter {
       await updateSignalStatus(this.db, signalId, 'ORDER_UNKNOWN');
       this.emitEvent('ORDER_UNKNOWN', activeId, { signalId, orderId, error: err instanceof Error ? err.message : String(err) });
     }
-    return [];
+    return { blockedBy: [], payoutPercentage: context.payoutPercentage };
   }
 
   private async buildSafetyContext(
