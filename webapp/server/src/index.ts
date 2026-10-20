@@ -28,7 +28,13 @@ import {
 import { BrokerManager } from './brokerFactory.js';
 import { runBacktest } from './backtest/backtestRunner.js';
 import { runPatternDiscovery } from './discovery/patternDiscovery.js';
-import { runClassicStrategy, runAllClassicStrategiesForAsset, detectPendingSignal } from './strategies/classicStrategies.js';
+import {
+  runClassicStrategy,
+  runAllClassicStrategiesForAsset,
+  detectPendingSignal,
+  fetchClosedCandles,
+  computeClassicStrategyResult,
+} from './strategies/classicStrategies.js';
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
@@ -305,6 +311,9 @@ interface AssetScanRanking {
   losses: number;
   dojis: number;
   occurrences: number;
+  /** So preenchido pela varredura de UMA estrategia (/api/scan-strategy) — se o setup esta se
+   * formando AGORA nesse ativo. undefined na varredura geral (/api/scan-all-assets). */
+  pendingDirection?: Direction | null;
 }
 
 /**
@@ -362,6 +371,85 @@ app.post('/api/scan-all-assets', async (req, res) => {
     res.json({
       best: ranking[0] ?? null,
       top: ranking.slice(0, 20),
+      assetsScanned: assets.length,
+      tookMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/**
+ * Varredura de UMA estrategia escolhida pelo usuario em TODOS os ativos — fluxo "escolho a
+ * estrategia, o app me diz em quais ativos ela esta valendo a pena e em quais esta se formando
+ * agora", ao contrario de /api/scan-all-assets (que testa as 10 estrategias e so reporta a
+ * MELHOR combinacao). Busca o historico de cada ativo uma unica vez e reaproveita pra calcular
+ * tanto o desempenho historico (wins/losses) quanto se o setup esta pendente AGORA
+ * (detectPendingSignal, mesma logica do aviso "ENTRADA AGORA").
+ */
+app.post('/api/scan-strategy', async (req, res) => {
+  const { strategyId, days } = req.body as { strategyId?: ClassicStrategyId; days?: number };
+  if (!strategyId || !CLASSIC_STRATEGY_IDS.includes(strategyId)) {
+    res.status(400).json({ error: 'Informe um strategyId válido.' });
+    return;
+  }
+  if (!Number.isFinite(days) || (days ?? 0) <= 0) {
+    res.status(400).json({ error: 'Informe days (numero positivo).' });
+    return;
+  }
+  const safeStrategyId: ClassicStrategyId = strategyId;
+  const strategy = defaultClassicStrategyConfig(safeStrategyId);
+  const strategyName = CLASSIC_STRATEGIES.find((s) => s.id === safeStrategyId)!.name;
+  const startedAt = Date.now();
+  try {
+    const assets = await brokerManager.get().listAssets();
+    const ranking: AssetScanRanking[] = [];
+    let cursor = 0;
+
+    async function worker(): Promise<void> {
+      for (;;) {
+        const i = cursor++;
+        if (i >= assets.length) return;
+        const asset = assets[i]!;
+        try {
+          const candles = await fetchClosedCandles(brokerManager.get(), asset.id, days!);
+          const result = computeClassicStrategyResult(candles, asset.id, days!, strategy);
+          const total = result.summary.wins + result.summary.losses + result.summary.dojis;
+          const pending = detectPendingSignal(candles, strategy);
+          ranking.push({
+            activeId: asset.id,
+            assetName: asset.name,
+            strategyId: safeStrategyId,
+            strategyName,
+            winRate: total > 0 ? result.summary.wins / total : 0,
+            wins: result.summary.wins,
+            losses: result.summary.losses,
+            dojis: result.summary.dojis,
+            occurrences: total,
+            pendingDirection: pending?.direction ?? null,
+          });
+        } catch (err) {
+          console.error(`[scan-strategy] falha no ativo ${asset.id}:`, err instanceof Error ? err.message : err);
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: SCAN_ALL_ASSETS_CONCURRENCY }, () => worker()));
+
+    // Ativos com o setup se formando AGORA sempre primeiro — sao a informacao mais acionavel —
+    // depois por taxa de acerto (desempate por numero de ocorrencias).
+    ranking.sort((a, b) => {
+      const aPending = a.pendingDirection != null;
+      const bPending = b.pendingDirection != null;
+      if (aPending !== bPending) return aPending ? -1 : 1;
+      return b.winRate - a.winRate || b.occurrences - a.occurrences;
+    });
+
+    res.json({
+      strategyId: safeStrategyId,
+      strategyName,
+      best: ranking[0] ?? null,
+      top: ranking.slice(0, 5),
       assetsScanned: assets.length,
       tookMs: Date.now() - startedAt,
     });

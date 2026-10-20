@@ -6,6 +6,7 @@ import type {
   ClassicStrategyResult,
   CustomPattern,
   DailyResult,
+  Direction,
   OrderRecord,
   PatternDiscoveryResult,
   PatternOccurrence,
@@ -41,6 +42,8 @@ export interface AssetScanRanking {
   losses: number;
   dojis: number;
   occurrences: number;
+  /** So vem preenchido de /api/scan-strategy — se o setup esta se formando AGORA nesse ativo. */
+  pendingDirection?: Direction | null;
 }
 
 // Em dev local, vazio (o proxy do Vite encaminha /api para http://localhost:4000). Em
@@ -158,6 +161,22 @@ export const api = {
       body: JSON.stringify({ days }),
     }).then((r) =>
       json<{
+        best: AssetScanRanking | null;
+        top: AssetScanRanking[];
+        assetsScanned: number;
+        tookMs: number;
+      }>(r)
+    ),
+
+  scanStrategy: (strategyId: ClassicStrategyId, days: number) =>
+    req('/api/scan-strategy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategyId, days }),
+    }).then((r) =>
+      json<{
+        strategyId: ClassicStrategyId;
+        strategyName: string;
         best: AssetScanRanking | null;
         top: AssetScanRanking[];
         assetsScanned: number;

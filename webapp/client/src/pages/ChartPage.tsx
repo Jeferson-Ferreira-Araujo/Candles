@@ -198,6 +198,44 @@ export function ChartPage() {
     }
   }, [loadChartFor]);
 
+  // Varredura de UMA estrategia escolhida: testa SO ela em TODOS os ativos — fluxo "escolhi a
+  // estrategia, me diz em quais ativos ela ta valendo a pena e em qual ta se formando AGORA".
+  // Abre direto o grafico do melhor resultado e mostra os 5 melhores ativos pra essa estrategia
+  // no painel de ranking (mesmo painel usado pela varredura completa).
+  const runStrategyScan = useCallback(
+    async (strategyId: ClassicStrategyId) => {
+      setScanStatus('scanning');
+      try {
+        const res = await api.scanStrategy(strategyId, SCAN_DAYS);
+        setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
+        setScanRanking(res.top);
+        setShowRanking(true); // so 5 linhas agora — cabe aberto direto, sem precisar clicar de novo
+        setScanStatus('done');
+        if (res.best) {
+          setDays(SCAN_DAYS);
+          loadChartFor(res.best.activeId, strategyId, SCAN_DAYS);
+        }
+      } catch {
+        setScanStatus('error');
+      }
+    },
+    [loadChartFor]
+  );
+
+  // Botao "Verificar" da barra superior: o que ele faz depende da estrategia escolhida no
+  // seletor — 'auto' reaproveita a varredura completa (10 estrategias), um id especifico dispara
+  // a varredura de SO aquela estrategia em todos os ativos, e 'pattern' (padrao customizado) nao
+  // tem varredura "todos os ativos" ainda, entao so recarrega o ativo ja selecionado.
+  function handleVerify() {
+    if (strategyMode === 'auto') {
+      runFullScan();
+    } else if (strategyMode === 'pattern') {
+      if (selectedAssetId !== null) loadChartFor(selectedAssetId);
+    } else {
+      runStrategyScan(strategyMode);
+    }
+  }
+
   useEffect(() => {
     api.getAssets().then(setAssets).catch(() => {});
     api.getActivePattern().then((p) => setHasActivePattern(!!p)).catch(() => {});
@@ -501,29 +539,17 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Barra superior: escolha de ativo + estrategia + periodo, compacta, sempre visivel. */}
+      {/* Barra superior: a ESTRATEGIA e a escolha principal agora — o ativo e sempre "todos" por
+          padrao, verificado de uma vez so ao clicar em Verificar (ver handleVerify). O seletor
+          de ativo isolado vira secundario, so pra abrir um ativo especifico manualmente. */}
       <div className="px-3 sm:px-6 py-2 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
-        <select
-          value={selectedAssetId ?? ''}
-          onChange={(e) => setSelectedAssetId(Number(e.target.value))}
-          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm min-w-[140px]"
-        >
-          {assets.length === 0 && <option value="">Carregando...</option>}
-          {assets.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-              {a.isOtc ? ' (OTC)' : ''}
-            </option>
-          ))}
-        </select>
-
         <select
           value={strategyMode}
           onChange={(e) => onStrategyModeChange(e.target.value as StrategyMode)}
-          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm max-w-[160px]"
-          title="Qual estratégia mostrar no gráfico"
+          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm max-w-[180px] font-medium"
+          title="Qual estratégia verificar em todos os ativos"
         >
-          <option value="auto">⭐ Automático (melhor)</option>
+          <option value="auto">⭐ Automático (testa todas)</option>
           {hasActivePattern && <option value="pattern">Padrão customizado ativo</option>}
           {CLASSIC_STRATEGIES.map((s) => (
             <option key={s.id} value={s.id}>
@@ -544,12 +570,43 @@ export function ChartPage() {
         </label>
 
         <button
-          onClick={loadChart}
-          disabled={loadingChart}
-          className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-semibold"
+          onClick={handleVerify}
+          disabled={scanStatus === 'scanning' || loadingChart}
+          title="Verifica a estratégia escolhida em TODOS os ativos: quais estão formando o padrão agora e quais tiveram mais wins"
+          className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-semibold whitespace-nowrap"
         >
-          {loadingChart ? 'Carregando...' : 'Carregar'}
+          {scanStatus === 'scanning' ? '🔍 Verificando...' : '🔍 Verificar'}
         </button>
+
+        {/* Ativo especifico — secundario, so pra abrir manualmente um ativo fora do resultado
+            da verificacao (ex.: revisar algo que ja conhece). */}
+        <details className="relative">
+          <summary className="list-none cursor-pointer text-xs text-slate-500 hover:text-slate-300 px-2 py-1.5 select-none">
+            ativo específico ▾
+          </summary>
+          <div className="absolute z-20 mt-1 flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-lg p-1.5 shadow-lg">
+            <select
+              value={selectedAssetId ?? ''}
+              onChange={(e) => setSelectedAssetId(Number(e.target.value))}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm min-w-[140px]"
+            >
+              {assets.length === 0 && <option value="">Carregando...</option>}
+              {assets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                  {a.isOtc ? ' (OTC)' : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={loadChart}
+              disabled={loadingChart}
+              className="rounded-lg border border-slate-700 hover:bg-slate-800 disabled:opacity-50 px-2.5 py-1.5 text-xs whitespace-nowrap"
+            >
+              Carregar
+            </button>
+          </div>
+        </details>
 
         {watchingAssetId !== null &&
           (isLive ? (
@@ -600,16 +657,6 @@ export function ChartPage() {
             </button>
           </div>
         )}
-
-        <button
-          type="button"
-          onClick={runFullScan}
-          disabled={scanStatus === 'scanning'}
-          title="Testa as 10 estratégias em todos os ativos (1 dia) e abre o melhor par ativo+estratégia"
-          className="ml-auto text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-900/40 disabled:opacity-50 px-2.5 py-1.5 whitespace-nowrap"
-        >
-          {scanStatus === 'scanning' ? '🔍 Analisando...' : '🔍 Analisar todos'}
-        </button>
       </div>
 
       {/* Avisos da watchlist: outros ativos (fora o que esta aberto agora) cujo setup acabou
@@ -640,7 +687,7 @@ export function ChartPage() {
       {scanStatus === 'scanning' ? (
         <div className="px-3 sm:px-6 py-1 text-xs text-sky-400 flex items-center gap-2 border-b border-slate-800 bg-sky-950/20">
           <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Analisando todos os ativos ({SCAN_DAYS} dia)...
+          Verificando {strategyMode === 'auto' ? 'todas as estratégias' : 'a estratégia'} em todos os ativos ({SCAN_DAYS} dia)...
         </div>
       ) : best === 'loading' ? (
         <div className="px-3 sm:px-6 py-1 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-800 bg-slate-950">
@@ -687,8 +734,9 @@ export function ChartPage() {
                 <th className="text-left font-medium px-3 sm:px-6 py-1">#</th>
                 <th className="text-left font-medium py-1">Ativo</th>
                 <th className="text-left font-medium py-1">Estratégia</th>
+                <th className="text-center font-medium py-1">Agora</th>
                 <th className="text-right font-medium py-1">Acerto</th>
-                <th className="text-right font-medium px-3 sm:px-6 py-1">W/L</th>
+                <th className="text-right font-medium px-3 sm:px-6 py-1">Wins/Losses</th>
               </tr>
             </thead>
             <tbody>
@@ -698,11 +746,23 @@ export function ChartPage() {
                   onClick={() => applyRanking(row)}
                   className={`cursor-pointer border-t border-slate-900 hover:bg-slate-900 transition-colors ${
                     row.activeId === watchingAssetId && row.strategyId === strategyMode ? 'bg-slate-800' : ''
-                  }`}
+                  } ${row.pendingDirection ? 'bg-amber-950/30' : ''}`}
                 >
                   <td className="px-3 sm:px-6 py-1 text-slate-500">{i + 1}</td>
                   <td className="py-1 font-medium">{row.assetName}</td>
                   <td className="py-1 text-slate-400">{row.strategyName}</td>
+                  <td className="py-1 text-center">
+                    {row.pendingDirection && (
+                      <span
+                        className={`inline-flex items-center gap-0.5 font-bold ${
+                          row.pendingDirection === 'CALL' ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                        title="Setup se formando agora"
+                      >
+                        🔔 {row.pendingDirection === 'CALL' ? 'CALL' : 'PUT'}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1 text-right font-semibold text-emerald-400">{formatPct(row.winRate)}</td>
                   <td className="px-3 sm:px-6 py-1 text-right text-slate-500">
                     {row.wins}/{row.losses}
