@@ -11,6 +11,11 @@ import type { AppMode, DailyResult } from '@polarium12c/shared';
 export interface SafetyContext {
   mode: AppMode;
   robotActive: boolean;
+  /** true = clique manual do usuario (Comprar/Vender) — ignora o kill switch `robotActive`,
+   * que so se aplica ao motor automatico (padrao customizado confirmando sozinho). Decisao
+   * explicita do usuario: clique manual ja e uma acao deliberada seguir, nao deveria depender
+   * de um interruptor separado estar ligado. */
+  isManualOrder: boolean;
   connectionHealthy: boolean;
   sessionValid: boolean;
   /** Diferenca (ms) entre o horario do servidor da corretora e o relogio local. null = desconhecido. */
@@ -61,7 +66,7 @@ export function evaluateSafety(ctx: SafetyContext): SafetyResult {
   // sessao/credencial o BrokerAdapter esta usando, nao desta funcao.
   if (ctx.mode === 'OBSERVATION') blockedBy.push('MODE_OBSERVATION');
 
-  if (!ctx.robotActive) blockedBy.push('ROBOT_STOPPED');
+  if (!ctx.isManualOrder && !ctx.robotActive) blockedBy.push('ROBOT_STOPPED');
   if (!ctx.connectionHealthy) blockedBy.push('CONNECTION_UNHEALTHY');
   if (!ctx.sessionValid) blockedBy.push('SESSION_INVALID');
 

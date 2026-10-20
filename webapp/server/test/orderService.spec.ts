@@ -241,13 +241,14 @@ describe('OrderService', () => {
     expect(status).toBe('ORDER_CONFIRMED');
   });
 
-  it('placeManualOrder e bloqueado pelo mesmo SafetyGate (ex.: kill switch)', async () => {
-    const { db, service } = await setup({ robotActive: false });
+  it('placeManualOrder passa pelo SafetyGate normalmente, mas IGNORA o kill switch do robo', async () => {
+    const { db, broker, service } = await setup({ robotActive: false });
+    broker.pushLiveCandle(ACTIVE, green(1_800_110_000));
     const outcome = await service.placeManualOrder(ACTIVE, 'CALL');
-    expect(outcome.allowed).toBe(false);
-    expect(outcome.blockedBy).toContain('ROBOT_STOPPED');
+    expect(outcome.allowed).toBe(true);
+    expect(outcome.blockedBy).not.toContain('ROBOT_STOPPED');
 
     const { rows } = await db.query('SELECT * FROM orders WHERE signal_id = $1', [outcome.signalId]);
-    expect(rows).toHaveLength(0);
+    expect(rows).toHaveLength(1);
   });
 });

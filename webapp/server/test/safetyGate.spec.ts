@@ -17,6 +17,7 @@ function baseContext(overrides: Partial<SafetyContext> = {}): SafetyContext {
   return {
     mode: 'DEMO',
     robotActive: true,
+    isManualOrder: false,
     connectionHealthy: true,
     sessionValid: true,
     serverTimeDriftMs: 100,
@@ -53,9 +54,15 @@ describe('SafetyGate — na duvida, nao operar', () => {
     expect(result.blockedBy).toEqual([]);
   });
 
-  it('bloqueia quando o robo esta parado (kill switch)', () => {
-    const result = evaluateSafety(baseContext({ robotActive: false }));
+  it('bloqueia quando o robo esta parado (kill switch) — so pra ordem AUTOMATICA', () => {
+    const result = evaluateSafety(baseContext({ robotActive: false, isManualOrder: false }));
     expect(result.blockedBy).toContain('ROBOT_STOPPED');
+  });
+
+  it('ordem MANUAL ignora o kill switch do robo (decisao explicita: clique manual ja e deliberado)', () => {
+    const result = evaluateSafety(baseContext({ robotActive: false, isManualOrder: true }));
+    expect(result.blockedBy).not.toContain('ROBOT_STOPPED');
+    expect(result.allowed).toBe(true);
   });
 
   it('bloqueia quando a conexao esta desconhecida/ruim', () => {

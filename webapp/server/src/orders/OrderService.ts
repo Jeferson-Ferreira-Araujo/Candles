@@ -91,7 +91,7 @@ export class OrderService extends EventEmitter {
     });
 
     const settings = await this.getSettings();
-    await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings);
+    await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings, false);
   }
 
   /**
@@ -114,7 +114,7 @@ export class OrderService extends EventEmitter {
     });
 
     const settings = await this.getSettings();
-    const blockedBy = await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings);
+    const blockedBy = await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings, true);
     return { allowed: blockedBy.length === 0, blockedBy, signalId };
   }
 
@@ -131,9 +131,10 @@ export class OrderService extends EventEmitter {
     direction: Direction,
     amount: number,
     galeLevel: number,
-    settings: Settings
+    settings: Settings,
+    isManualOrder: boolean
   ): Promise<SafetyBlockReason[]> {
-    const context = await this.buildSafetyContext(activeId, signalId, amount, settings);
+    const context = await this.buildSafetyContext(activeId, signalId, amount, settings, isManualOrder);
     const safety = evaluateSafety(context);
 
     if (!safety.allowed) {
@@ -166,9 +167,18 @@ export class OrderService extends EventEmitter {
       await updateSignalStatus(this.db, signalId, 'ORDER_CONFIRMED');
       this.emitEvent('ORDER_CONFIRMED', activeId, { signalId, orderId, brokerOrderId: ack.brokerOrderId, galeLevel });
 
-      this.pollForResolution(orderId, ack.brokerOrderId, activeId, signalId, rootSignalId, direction, amount, galeLevel, settings).catch(
-        (err) => this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, orderId, pollError: String(err) })
-      );
+      this.pollForResolution(
+        orderId,
+        ack.brokerOrderId,
+        activeId,
+        signalId,
+        rootSignalId,
+        direction,
+        amount,
+        galeLevel,
+        settings,
+        isManualOrder
+      ).catch((err) => this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, orderId, pollError: String(err) }));
     } catch (err) {
       // Perdeu a conexao (ou a corretora rejeitou) DEPOIS de persistir a ordem, ANTES de
       // confirmar. Regra: nunca reenviar. Fica UNKNOWN ate reconciliacao manual/automatica.
@@ -179,7 +189,13 @@ export class OrderService extends EventEmitter {
     return [];
   }
 
-  private async buildSafetyContext(activeId: number, signalId: string, entryAmount: number, settings: Settings): Promise<SafetyContext> {
+  private async buildSafetyContext(
+    activeId: number,
+    signalId: string,
+    entryAmount: number,
+    settings: Settings,
+    isManualOrder: boolean
+  ): Promise<SafetyContext> {
     let connectionHealthy = false;
     let sessionValid = false;
     let serverTimeDriftMs: number | null = null;
@@ -196,7 +212,11 @@ export class OrderService extends EventEmitter {
     let balance: number | null = null;
     try {
       const balances = await this.broker.getBalances();
-      balance = balances[0]?.amount ?? null;
+      // Tem que ser o saldo do MODO ATIVO (demo/real), nunca so "o primeiro que veio" — senao
+      // o INSUFFICIENT_BALANCE podia estar checando a conta errada (mesmo bug corrigido no
+      // cabecalho do cliente, aqui no lado que realmente decide se opera ou nao).
+      const wantedType = settings.mode === 'REAL' ? 'real' : 'demo';
+      balance = balances.find((b) => b.type === wantedType)?.amount ?? null;
     } catch {
       balance = null;
     }
@@ -211,6 +231,7 @@ export class OrderService extends EventEmitter {
     return {
       mode: settings.mode,
       robotActive: settings.robotActive,
+      isManualOrder,
       connectionHealthy,
       sessionValid,
       serverTimeDriftMs,
@@ -236,7 +257,8 @@ export class OrderService extends EventEmitter {
     direction: Direction,
     amount: number,
     galeLevel: number,
-    settings: Settings
+    settings: Settings,
+    isManualOrder: boolean
   ): Promise<void> {
     for (let attempt = 0; attempt < this.maxPollAttempts; attempt++) {
       await new Promise((r) => setTimeout(r, this.pollIntervalMs));
@@ -275,7 +297,7 @@ export class OrderService extends EventEmitter {
           wickPercentage11: 0,
           status: 'CREATED',
         });
-        await this.executeOrder(nextSignalId, rootSignalId, activeId, direction, nextAmount, nextLevel, settings);
+        await this.executeOrder(nextSignalId, rootSignalId, activeId, direction, nextAmount, nextLevel, settings, isManualOrder);
       }
       return;
     }
