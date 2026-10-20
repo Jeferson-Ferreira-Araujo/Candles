@@ -11,7 +11,6 @@ import {
 } from '../lib/bestStrategyFinder.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
-const DEFAULT_DAYS = 3;
 const SCAN_DAYS = 1; // periodo curto de proposito: a varredura roda em TODOS os ativos, 1 dia ja e pesado
 
 /** 'auto' = deixa o app escolher a melhor entre todas; os demais sao escolha manual do usuario. */
@@ -36,18 +35,19 @@ async function resolveStrategy(assetId: number, days: number, mode: StrategyMode
 }
 
 /**
- * Tela inicial do app: grafico de candlestick real em tempo real, estilo corretora — escolhe
- * um ativo (pelo seletor ou pela lista lateral), ve as velas se movendo ao vivo, com os sinais
- * da estrategia escolhida sobrepostos (automatica ou manual, ver seletor "Estratégia"). A barra
- * inferior (preco, Comprar/Vender) e so visual, pra ficar parecido com a tela que o usuario ja
- * conhece — este app nunca envia ordem nenhuma (so monitora e sugere, quem decide e executa e
- * sempre o usuario).
+ * Tela inicial do app: assim que carrega, varre TODOS os ativos (1 dia) e ja abre direto o
+ * ativo+estrategia com melhor taxa de acerto — grafico de candlestick real em tempo real,
+ * estilo corretora, com as entradas (win/loss) marcadas e um aviso visual, no grafico e numa
+ * faixa, quando o setup acabou de se completar (a vela atual e a entrada). Pensada pra caber
+ * numa unica tela: sem lista de ativos pra navegar (so o melhor importa aqui), e com os botoes
+ * Comprar/Vender ao LADO do grafico em telas largas (celular deitado incluso), nao embaixo —
+ * tudo visivel junto, sem precisar rolar. Os botoes sao so visuais: este app nunca envia ordem
+ * nenhuma, so monitora e sugere — quem decide e executa e sempre o usuario.
  */
 export function ChartPage() {
   const [assets, setAssets] = useState<AssetInfo[]>([]);
-  const [assetFilter, setAssetFilter] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
-  const [days, setDays] = useState(DEFAULT_DAYS);
+  const [days, setDays] = useState(SCAN_DAYS);
   const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
   const [hasActivePattern, setHasActivePattern] = useState(false);
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -61,6 +61,7 @@ export function ChartPage() {
   const [scanInfo, setScanInfo] = useState<{ assetsScanned: number; tookMs: number; bestAssetName?: string } | null>(null);
   const [scanRanking, setScanRanking] = useState<AssetScanRanking[]>([]);
   const [showRanking, setShowRanking] = useState(false);
+  const [resultIndex, setResultIndex] = useState<number | null>(null);
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
@@ -144,16 +145,13 @@ export function ChartPage() {
   }
 
   // Varredura completa: roda as 10 estrategias classicas em TODOS os ativos (periodo curto,
-  // 1 dia) e abre direto o par ativo+estrategia que teve a melhor taxa de acerto. Pesado de
-  // proposito — avisa no botao/banner se estiver demorando, mas o usuario pode continuar
-  // usando a tela normalmente enquanto isso roda em paralelo.
+  // 1 dia) e abre direto o par ativo+estrategia que teve a melhor taxa de acerto.
   const runFullScan = useCallback(async () => {
     setScanStatus('scanning');
     try {
       const res = await api.scanAllAssets(SCAN_DAYS);
       setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
       setScanRanking(res.top);
-      setShowRanking(res.top.length > 0);
       setScanStatus('done');
       if (res.best) {
         setDays(SCAN_DAYS);
@@ -166,10 +164,7 @@ export function ChartPage() {
   }, [loadChartFor]);
 
   useEffect(() => {
-    api.getAssets().then((list) => {
-      setAssets(list);
-      setSelectedAssetId((current) => current ?? list[0]?.id ?? null);
-    }).catch(() => {});
+    api.getAssets().then(setAssets).catch(() => {});
     api.getActivePattern().then((p) => setHasActivePattern(!!p)).catch(() => {});
   }, []);
 
@@ -228,18 +223,60 @@ export function ChartPage() {
     loadChartFor(row.activeId, row.strategyId, SCAN_DAYS);
   }
 
-  const markers: ChartMarker[] = best && best !== 'loading' ? best.markers : [];
+  const markers: ChartMarker[] = best && best !== 'loading' ? [...best.markers] : [];
+  // Indicador visual NO PROPRIO GRAFICO de que o setup acabou de se formar — alem da faixa de
+  // aviso e dos botoes pulsando, marca a propria vela que esta se formando agora.
+  if (pendingSignal && liveCandle) {
+    markers.push({
+      time: liveCandle.from,
+      position: pendingSignal === 'CALL' ? 'belowBar' : 'aboveBar',
+      color: '#fbbf24',
+      shape: 'circle',
+      text: 'ENTRADA',
+    });
+  }
   const currentPrice = liveCandle?.close ?? candles[candles.length - 1]?.close ?? null;
-  const filteredAssets = useMemo(() => {
-    const q = assetFilter.trim().toLowerCase();
-    if (!q) return assets;
-    return assets.filter((a) => a.name.toLowerCase().includes(q));
-  }, [assets, assetFilter]);
+
+  // So os marcadores de RESULTADO (win/loss), em ordem cronologica — usado pra "voltar no
+  // tempo" navegando ocorrencia por ocorrencia. Depende de `best` (nao do array `markers`
+  // acima, que e recriado toda hora) pra so recalcular quando a estrategia/ativo muda de verdade.
+  const resultMarkers = useMemo(() => {
+    if (!best || best === 'loading') return [];
+    return best.markers.filter((m) => m.text === 'WIN' || m.text === 'LOSS').slice().sort((a, b) => a.time - b.time);
+  }, [best]);
+
+  // Zera a navegacao sempre que a estrategia/ativo muda — a posicao antiga nao faz sentido
+  // pro novo conjunto de ocorrencias.
+  useEffect(() => {
+    setResultIndex(null);
+  }, [best]);
+
+  function goToResultIndex(index: number) {
+    if (resultMarkers.length === 0) return;
+    const clamped = Math.max(0, Math.min(resultMarkers.length - 1, index));
+    setResultIndex(clamped);
+    const marker = resultMarkers[clamped]!;
+    const centerIdx = candles.findIndex((c) => c.from === marker.time);
+    if (centerIdx === -1 || !chartRef.current) return;
+    const fromCandle = candles[Math.max(0, centerIdx - 20)]!;
+    const toCandle = candles[Math.min(candles.length - 1, centerIdx + 10)]!;
+    chartRef.current.setVisibleRange(fromCandle.from, toCandle.to);
+  }
+
+  function goPrevResult() {
+    goToResultIndex(resultIndex === null ? resultMarkers.length - 1 : resultIndex - 1);
+  }
+
+  function goNextResult() {
+    goToResultIndex(resultIndex === null ? resultMarkers.length - 1 : resultIndex + 1);
+  }
+
+  const currentResult = resultIndex !== null ? resultMarkers[resultIndex] : undefined;
 
   return (
     <div className="flex flex-col">
       {/* Barra superior: escolha de ativo + estrategia + periodo, compacta, sempre visivel. */}
-      <div className="px-3 sm:px-6 py-2.5 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
+      <div className="px-3 sm:px-6 py-2 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
         <select
           value={selectedAssetId ?? ''}
           onChange={(e) => setSelectedAssetId(Number(e.target.value))}
@@ -288,26 +325,55 @@ export function ChartPage() {
           {loadingChart ? 'Carregando...' : 'Carregar'}
         </button>
 
-        <div className="flex items-center gap-2 ml-0 sm:ml-2">
-          {watchingAssetId !== null &&
-            (isLive ? (
-              <span className="flex items-center gap-1 text-xs font-medium text-rose-400">
-                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs text-slate-500">
-                <span className="h-2 w-2 rounded-full bg-slate-600" /> aguardando tick...
-              </span>
-            ))}
-        </div>
+        {watchingAssetId !== null &&
+          (isLive ? (
+            <span className="flex items-center gap-1 text-xs font-medium text-rose-400">
+              <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
+            </span>
+          ) : (
+            <span className="hidden sm:flex items-center gap-1 text-xs text-slate-500">
+              <span className="h-2 w-2 rounded-full bg-slate-600" /> aguardando tick...
+            </span>
+          ))}
 
         <button
           type="button"
           onClick={() => chartRef.current?.goToRealTime()}
           className="text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5"
         >
-          ⏭ Ir para agora
+          ⏭ agora
         </button>
+
+        {resultMarkers.length > 0 && (
+          <div className="flex items-center gap-1 text-xs" title="Navegar pelas entradas passadas (win/loss)">
+            <button
+              type="button"
+              onClick={goPrevResult}
+              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2 py-1.5"
+            >
+              ◀
+            </button>
+            <span className="text-slate-500 min-w-[64px] text-center">
+              {currentResult ? (
+                <>
+                  <span className={currentResult.text === 'WIN' ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                    {currentResult.text}
+                  </span>{' '}
+                  {resultIndex! + 1}/{resultMarkers.length}
+                </>
+              ) : (
+                `${resultMarkers.length} sinais`
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={goNextResult}
+              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2 py-1.5"
+            >
+              ▶
+            </button>
+          </div>
+        )}
 
         <button
           type="button"
@@ -316,32 +382,45 @@ export function ChartPage() {
           title="Testa as 10 estratégias em todos os ativos (1 dia) e abre o melhor par ativo+estratégia"
           className="ml-auto text-xs rounded-lg border border-sky-700 text-sky-300 hover:bg-sky-900/40 disabled:opacity-50 px-2.5 py-1.5 whitespace-nowrap"
         >
-          {scanStatus === 'scanning' ? '🔍 Analisando todos os ativos...' : '🔍 Analisar todos os ativos'}
+          {scanStatus === 'scanning' ? '🔍 Analisando...' : '🔍 Analisar todos'}
         </button>
       </div>
 
-      {scanStatus === 'scanning' && (
-        <div className="px-3 sm:px-6 py-1.5 text-xs text-sky-400 flex items-center gap-2 border-b border-slate-800 bg-sky-950/20">
+      {/* Linha de status: varredura OU melhor estrategia (nunca as duas, pra poupar altura —
+          importante no celular deitado, onde a tela e baixa). */}
+      {scanStatus === 'scanning' ? (
+        <div className="px-3 sm:px-6 py-1 text-xs text-sky-400 flex items-center gap-2 border-b border-slate-800 bg-sky-950/20">
           <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Rodando as 10 estratégias em todos os ativos ({SCAN_DAYS} dia) — isso pode demorar um pouco, continue usando a tela normalmente.
+          Analisando todos os ativos ({SCAN_DAYS} dia)...
         </div>
-      )}
-      {scanStatus === 'done' && scanInfo && (
-        <div className="px-3 sm:px-6 py-1 text-[11px] text-slate-500 border-b border-slate-800 bg-slate-950 flex items-center gap-2 flex-wrap">
-          <span>
-            Varredura: {scanInfo.assetsScanned} ativos em {formatMs(scanInfo.tookMs)}
-            {scanInfo.bestAssetName ? ` — melhor: ${scanInfo.bestAssetName}` : ' — nenhum ativo teve ocorrências suficientes'}.
-          </span>
-          {scanRanking.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowRanking((v) => !v)}
-              className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
-            >
-              {showRanking ? 'ocultar ranking' : `ver ranking completo (${scanRanking.length})`}
-            </button>
-          )}
+      ) : best === 'loading' ? (
+        <div className="px-3 sm:px-6 py-1 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-800 bg-slate-950">
+          <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+          Testando estratégia...
         </div>
+      ) : (
+        best && (
+          <div className="px-3 sm:px-6 py-1 flex items-center gap-3 flex-wrap text-xs border-b border-slate-800 bg-emerald-950/20">
+            <span className="font-semibold text-emerald-300">⭐ {best.name}</span>
+            <span className="text-emerald-400">{best.wins}W</span>
+            <span className="text-rose-400">{best.losses}L</span>
+            <span className="font-semibold text-white">{formatPct(best.winRate)}</span>
+            {scanInfo && (
+              <span className="text-slate-600 hidden sm:inline">
+                ({scanInfo.assetsScanned} ativos em {formatMs(scanInfo.tookMs)})
+              </span>
+            )}
+            {scanRanking.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowRanking((v) => !v)}
+                className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
+              >
+                {showRanking ? 'ocultar ranking' : `ranking (${scanRanking.length})`}
+              </button>
+            )}
+          </div>
+        )
       )}
       {scanStatus === 'error' && (
         <div className="px-3 sm:px-6 py-1 text-[11px] text-rose-400 border-b border-slate-800 bg-rose-950/20">
@@ -349,18 +428,18 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Ranking completo da varredura: ativo + estrategia + taxa de acerto, pra comparar e
-          escolher manualmente em vez de so aceitar a sugestao automatica. */}
+      {/* Ranking completo da varredura — escondido por padrao, pra caber tudo numa tela so;
+          abre sob demanda pra comparar ativo+estrategia antes de decidir. */}
       {showRanking && scanRanking.length > 0 && (
-        <div className="border-b border-slate-800 bg-slate-950 max-h-56 overflow-y-auto">
+        <div className="border-b border-slate-800 bg-slate-950 max-h-40 overflow-y-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-slate-900 text-slate-500">
               <tr>
-                <th className="text-left font-medium px-3 sm:px-6 py-1.5">#</th>
-                <th className="text-left font-medium py-1.5">Ativo</th>
-                <th className="text-left font-medium py-1.5">Estratégia</th>
-                <th className="text-right font-medium py-1.5">Acerto</th>
-                <th className="text-right font-medium px-3 sm:px-6 py-1.5">W/L</th>
+                <th className="text-left font-medium px-3 sm:px-6 py-1">#</th>
+                <th className="text-left font-medium py-1">Ativo</th>
+                <th className="text-left font-medium py-1">Estratégia</th>
+                <th className="text-right font-medium py-1">Acerto</th>
+                <th className="text-right font-medium px-3 sm:px-6 py-1">W/L</th>
               </tr>
             </thead>
             <tbody>
@@ -372,11 +451,11 @@ export function ChartPage() {
                     row.activeId === watchingAssetId && row.strategyId === strategyMode ? 'bg-slate-800' : ''
                   }`}
                 >
-                  <td className="px-3 sm:px-6 py-1.5 text-slate-500">{i + 1}</td>
-                  <td className="py-1.5 font-medium">{row.assetName}</td>
-                  <td className="py-1.5 text-slate-400">{row.strategyName}</td>
-                  <td className="py-1.5 text-right font-semibold text-emerald-400">{formatPct(row.winRate)}</td>
-                  <td className="px-3 sm:px-6 py-1.5 text-right text-slate-500">
+                  <td className="px-3 sm:px-6 py-1 text-slate-500">{i + 1}</td>
+                  <td className="py-1 font-medium">{row.assetName}</td>
+                  <td className="py-1 text-slate-400">{row.strategyName}</td>
+                  <td className="py-1 text-right font-semibold text-emerald-400">{formatPct(row.winRate)}</td>
+                  <td className="px-3 sm:px-6 py-1 text-right text-slate-500">
                     {row.wins}/{row.losses}
                   </td>
                 </tr>
@@ -386,99 +465,74 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Faixa da melhor estrategia — so aparece quando ha algo pra mostrar, pra nao ocupar
-          espaco a toa. */}
-      {best === 'loading' && (
-        <div className="px-3 sm:px-6 py-1.5 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-800 bg-slate-950">
-          <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Testando estratégia...
-        </div>
-      )}
-      {best && best !== 'loading' && (
-        <div className="px-3 sm:px-6 py-1.5 flex items-center gap-3 flex-wrap text-xs border-b border-slate-800 bg-emerald-950/20">
-          <span className="font-semibold text-emerald-300">⭐ {best.name}</span>
-          <span className="text-emerald-400">{best.wins}W</span>
-          <span className="text-rose-400">{best.losses}L</span>
-          <span className="font-semibold text-white">{formatPct(best.winRate)}</span>
-          <span className="text-slate-500 ml-auto hidden sm:flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" /> acerto
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-rose-500" /> erro
-            </span>
-          </span>
-        </div>
-      )}
-
       {/* Aviso de entrada ao vivo: o setup da estrategia escolhida acabou de se completar na
-          ultima vela fechada — a vela se formando agora e a entrada (compra ou venda). */}
+          ultima vela fechada — a vela se formando agora e a entrada (compra ou venda). O
+          circulo amarelo "ENTRADA" no grafico (ver markers acima) reforca a mesma coisa
+          visualmente em cima da propria vela. */}
       {pendingSignal && (
         <div
-          className={`px-3 sm:px-6 py-2 flex items-center gap-2 text-sm font-bold border-b animate-pulse ${
+          className={`px-3 sm:px-6 py-1.5 flex items-center gap-2 text-sm font-bold border-b animate-pulse ${
             pendingSignal === 'CALL'
               ? 'bg-emerald-600/90 border-emerald-500 text-white'
               : 'bg-rose-600/90 border-rose-500 text-white'
           }`}
         >
           <span className="text-base">🔔</span>
-          ENTRADA AGORA — {pendingSignal === 'CALL' ? 'COMPRA (CALL)' : 'VENDA (PUT)'}: a vela atual é a entrada
+          ENTRADA AGORA — {pendingSignal === 'CALL' ? 'COMPRA (CALL)' : 'VENDA (PUT)'}
         </div>
       )}
       {chartError && (
-        <div className="px-3 sm:px-6 py-1.5 text-xs text-rose-400 border-b border-slate-800 bg-rose-950/20">{chartError}</div>
+        <div className="px-3 sm:px-6 py-1 text-xs text-rose-400 border-b border-slate-800 bg-rose-950/20">{chartError}</div>
       )}
 
-      {/* Grafico + lista lateral de ativos, igual corretora. */}
+      {/* Grafico + botoes Comprar/Vender ao lado (sm+: desktop e celular deitado — a largura
+          ja passa de 640px nessa orientacao na maioria dos aparelhos). Em celular em pe, os
+          botoes vao pra uma barra embaixo (ver mais abaixo). */}
       <div className="flex">
-        <div className="flex-1 min-w-0 h-[58vh] sm:h-[66vh]">
+        <div className="flex-1 min-w-0 h-[60vh] sm:h-[70vh]">
           {candles.length > 0 ? (
             <CandleChart ref={chartRef} candles={candles} liveCandle={liveCandle} markers={markers} fill />
           ) : (
             <div className="h-full flex items-center justify-center text-sm text-slate-500 px-4 text-center">
-              {loadingChart ? 'Carregando velas...' : 'Escolha um ativo e toque em "Carregar" para ver o gráfico.'}
+              {loadingChart || scanStatus === 'scanning' ? 'Carregando...' : 'Escolha um ativo e toque em "Carregar".'}
             </div>
           )}
         </div>
 
-        <div className="w-[88px] sm:w-44 shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col">
-          <div className="hidden sm:block p-2 border-b border-slate-800">
-            <input
-              value={assetFilter}
-              onChange={(e) => setAssetFilter(e.target.value)}
-              placeholder="Filtrar..."
-              className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs"
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {filteredAssets.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => loadChartFor(a.id)}
-                className={`w-full text-left px-2 py-2 border-b border-slate-900 transition-colors ${
-                  a.id === watchingAssetId ? 'bg-slate-800' : 'hover:bg-slate-900'
-                }`}
-                title={a.name}
-              >
-                <div className="text-[11px] sm:text-xs font-medium truncate">{a.name}</div>
-                {a.isOtc && <div className="text-[9px] sm:text-[10px] text-amber-500">OTC</div>}
-              </button>
-            ))}
-            {assets.length > 0 && filteredAssets.length === 0 && (
-              <div className="p-2 text-[10px] text-slate-500">Nenhum ativo.</div>
-            )}
+        <div className="hidden sm:flex w-24 md:w-32 shrink-0 border-l border-slate-800 bg-slate-950 flex-col items-stretch justify-center gap-2 p-2">
+          <button
+            type="button"
+            title="Este app apenas monitora — não envia ordens."
+            className={`rounded-lg py-3 text-sm font-bold tracking-wide transition-colors ${
+              pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
+            }`}
+          >
+            VENDER
+          </button>
+          <button
+            type="button"
+            title="Este app apenas monitora — não envia ordens."
+            className={`rounded-lg py-3 text-sm font-bold tracking-wide transition-colors ${
+              pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
+            }`}
+          >
+            COMPRAR
+          </button>
+          <div className="pt-2 text-center text-[11px] text-slate-400 space-y-1">
+            <div className="truncate font-medium text-slate-200">{nameOf(selectedAssetId) || '—'}</div>
+            <div>{currentPrice !== null ? formatPrice(currentPrice) : '—'}</div>
+            {best && best !== 'loading' && <div className="text-emerald-400 font-semibold">{formatPct(best.winRate)}</div>}
           </div>
         </div>
       </div>
 
-      {/* Barra inferior estilo corretora — so visual: este app nunca envia ordem nenhuma, os
-          botoes Comprar/Vender nao fazem nada ao clicar. */}
-      <div className="border-t border-slate-800 bg-slate-950 px-3 sm:px-6 py-3 flex items-center gap-3 sm:gap-6 flex-wrap">
+      {/* Barra inferior — so em celular em pe (sm:hidden), onde nao ha largura pros botoes
+          ficarem do lado sem espremer o grafico. */}
+      <div className="sm:hidden border-t border-slate-800 bg-slate-950 px-3 py-2.5 flex items-center gap-3 flex-wrap">
         <button
           type="button"
           title="Este app apenas monitora — não envia ordens."
-          className={`order-2 sm:order-1 flex-1 sm:flex-none rounded-lg px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide transition-colors ${
+          className={`order-2 flex-1 rounded-lg px-4 py-2.5 text-sm font-bold tracking-wide transition-colors ${
             pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
           }`}
         >
@@ -487,14 +541,13 @@ export function ChartPage() {
         <button
           type="button"
           title="Este app apenas monitora — não envia ordens."
-          className={`order-3 sm:order-2 flex-1 sm:flex-none rounded-lg px-4 sm:px-6 py-2.5 text-sm font-bold tracking-wide transition-colors ${
+          className={`order-3 flex-1 rounded-lg px-4 py-2.5 text-sm font-bold tracking-wide transition-colors ${
             pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
           }`}
         >
           COMPRAR
         </button>
-
-        <div className="order-1 sm:order-3 w-full sm:w-auto flex items-center gap-4 text-xs text-slate-400 sm:ml-4">
+        <div className="order-1 w-full flex items-center gap-4 text-xs text-slate-400">
           <div>
             <div className="text-slate-500">Ativo</div>
             <div className="text-slate-200 font-medium">{nameOf(selectedAssetId) || '—'}</div>

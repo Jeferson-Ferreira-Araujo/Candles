@@ -18,7 +18,7 @@ export interface ChartMarker {
   time: number; // epoch seconds (candle.from do candle marcado)
   position: 'aboveBar' | 'belowBar';
   color: string;
-  shape: 'arrowUp' | 'arrowDown';
+  shape: 'arrowUp' | 'arrowDown' | 'circle';
   text?: string;
 }
 
@@ -38,6 +38,9 @@ interface Props {
 export interface CandleChartHandle {
   /** Rola ate a ponta mais recente (agora) — usado pelo botao "Ir para agora". */
   goToRealTime: () => void;
+  /** Centraliza a visao num intervalo de tempo especifico (epoch seconds) — usado pela
+   * navegacao entre ocorrencias WIN/LOSS, pra "voltar no tempo" ate um sinal passado. */
+  setVisibleRange: (from: number, to: number) => void;
 }
 
 function toCandlestickData(c: Candle): CandlestickData<Time> {
@@ -143,6 +146,8 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
 
   useImperativeHandle(ref, () => ({
     goToRealTime: () => chartRef.current?.timeScale().scrollToRealTime(),
+    setVisibleRange: (from, to) =>
+      chartRef.current?.timeScale().setVisibleRange({ from: from as UTCTimestamp, to: to as UTCTimestamp }),
   }));
 
   return <div ref={containerRef} className={fill ? 'w-full h-full' : 'w-full'} />;
