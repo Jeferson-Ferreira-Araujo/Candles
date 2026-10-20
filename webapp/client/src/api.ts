@@ -189,14 +189,6 @@ export const api = {
       json<{ allowed: boolean; blockedBy: string[]; signalId: string; amount: number; payoutPercentage: number | null }>(r)
     ),
 
-  setWatchlist: (entries: WatchlistEntry[]) =>
-    req('/api/watchlist', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries }),
-    }).then((r) => json<{ ok: true }>(r)),
-
-  clearWatchlist: () => req('/api/watchlist', { method: 'DELETE' }).then((r) => json<{ ok: true }>(r)),
 
   getAssets: () => req('/api/assets').then((r) => json<AssetInfo[]>(r)),
 

@@ -91,7 +91,10 @@ export function ChartPage() {
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
   const [resultToast, setResultToast] = useState<{ status: 'WIN' | 'LOSS' | 'DOJI'; pnl?: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const [watchlistSignals, setWatchlistSignals] = useState<Record<number, WatchlistEntry & { direction: Direction }>>({});
+  // Chave composta `activeId:strategyId` — agora vigiamos TODOS os ativos x TODAS as
+  // estrategias, entao o mesmo ativo pode ter mais de um aviso ativo ao mesmo tempo (uma
+  // estrategia diferente cada), nao so um por ativo como antes (so top 3).
+  const [watchlistSignals, setWatchlistSignals] = useState<Record<string, WatchlistEntry & { direction: Direction }>>({});
   const { events, lastCandleUpdate } = useLiveSocket();
   const { refreshHeader } = useOutletContext<{ events: AppEvent[]; settings: Settings | null; refreshHeader: () => Promise<void> }>();
   const watchingAssetIdRef = useRef<number | null>(null);
@@ -190,25 +193,6 @@ export function ChartPage() {
         setStrategyMode(res.best.strategyId);
         loadChartFor(res.best.activeId, res.best.strategyId, SCAN_DAYS);
       }
-
-      // Top 3 ATIVOS distintos (cada um com a sua melhor estrategia) ficam sendo vigiados em
-      // segundo plano no servidor — avisa via WebSocket quando o setup de qualquer um deles
-      // se completar, mesmo que o usuario esteja olhando outro ativo no grafico agora.
-      const seenAssets = new Set<number>();
-      const topDistinctAssets: WatchlistEntry[] = [];
-      for (const row of res.top) {
-        if (seenAssets.has(row.activeId)) continue;
-        seenAssets.add(row.activeId);
-        topDistinctAssets.push({
-          activeId: row.activeId,
-          assetName: row.assetName,
-          strategyId: row.strategyId,
-          strategyName: row.strategyName,
-        });
-        if (topDistinctAssets.length === 3) break;
-      }
-      setWatchlistSignals({});
-      api.setWatchlist(topDistinctAssets).catch(() => {});
     } catch {
       setScanStatus('error');
     }
@@ -235,26 +219,29 @@ export function ChartPage() {
   }, [assets, runFullScan]);
 
   // Para a transmissao ao sair da tela (sem isso, o servidor continuaria assinado no ultimo
-  // ativo escolhido indefinidamente). A watchlist (top 3) tambem para junto.
+  // ativo escolhido indefinidamente). A watchlist (todos os ativos) e vigilancia do servidor,
+  // independente da tela aberta — continua rodando em segundo plano.
   useEffect(() => {
     return () => {
       if (watchingAssetIdRef.current !== null) api.unwatchChartAsset().catch(() => {});
-      api.clearWatchlist().catch(() => {});
     };
   }, []);
 
-  // Avisos da watchlist (top 3 ativos da ultima varredura, vigiados em segundo plano no
-  // servidor) — chegam mesmo que o usuario esteja olhando outro ativo no grafico agora.
+  // Avisos da watchlist (TODOS os ativos x TODAS as estrategias, vigiados em segundo plano no
+  // servidor desde o login) — chegam mesmo que o usuario esteja olhando outro ativo no grafico
+  // agora. O servidor so manda evento quando um sinal APARECE ou SOME (nunca fica reportando
+  // "sem sinal" a cada fechamento de vela pra nao inundar a tela).
   useEffect(() => {
     const last = events[0];
     if (!last || last.type !== 'WATCHLIST_SIGNAL' || last.activeId === undefined) return;
     const payload = last.payload as unknown as WatchlistEntry & { direction: Direction | null };
+    const key = `${payload.activeId}:${payload.strategyId}`;
     setWatchlistSignals((prev) => {
       const next = { ...prev };
       if (payload.direction) {
-        next[last.activeId!] = { ...payload, direction: payload.direction };
+        next[key] = { ...payload, direction: payload.direction };
       } else {
-        delete next[last.activeId!];
+        delete next[key];
       }
       return next;
     });
@@ -629,9 +616,9 @@ export function ChartPage() {
           de se completar — toca pra abrir aquele ativo+estrategia na hora. */}
       {Object.keys(watchlistSignals).length > 0 && (
         <div className="px-3 sm:px-6 py-1.5 flex items-center gap-2 flex-wrap border-b border-slate-800 bg-amber-950/20">
-          {Object.values(watchlistSignals).map((sig) => (
+          {Object.entries(watchlistSignals).map(([key, sig]) => (
             <button
-              key={sig.activeId}
+              key={key}
               type="button"
               onClick={() => {
                 setStrategyMode(sig.strategyId);
