@@ -88,7 +88,9 @@ export function ChartPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
-  const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
+  // 2+ entradas simultaneas no mesmo ativo sao permitidas (cliques repetidos em Comprar/Vender
+  // acumulam, nao substituem) — por isso e uma LISTA, nao uma entrada so.
+  const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
   // Controla so a faixa de status (preco/contagem/lucro-prejuizo) acima do grafico — some
   // sozinha um tempo depois do resultado chegar, sem apagar a linha tracejada nem o marcador
   // WIN/LOSS no candle (esses continuam ate a proxima entrada, sao o "registro" da operacao).
@@ -138,7 +140,7 @@ export function ChartPage() {
     setBest('loading');
     setLiveCandle(null);
     setPendingSignal(null);
-    setActiveOrder(null);
+    setActiveOrders([]);
     try {
       const [data] = await Promise.all([api.getCandles(assetId, d), api.watchChartAsset(assetId)]);
       setCandles(data);
@@ -314,30 +316,32 @@ export function ChartPage() {
       });
   }, [events, checkPendingSignal]);
 
-  // Resultado da entrada manual em acompanhamento: WIN/LOSS/DOJI chegam via evento (emitidos
-  // pelo OrderService quando pollForResolution confirma o fechamento na corretora), casados
-  // pelo mesmo signalId devolvido na hora de enviar a ordem.
+  // Resultado de QUALQUER entrada manual em acompanhamento: WIN/LOSS/DOJI chegam via evento
+  // (emitidos pelo OrderService quando pollForResolution confirma o fechamento na corretora),
+  // casados pelo signalId — pode haver 2+ entradas abertas, cada uma resolve independente.
   useEffect(() => {
     const last = events[0];
-    if (!last || !activeOrder || activeOrder.status !== 'OPEN') return;
+    if (!last) return;
     if (last.type !== 'WIN' && last.type !== 'LOSS' && last.type !== 'DOJI') return;
     const payload = last.payload as { signalId?: string; pnl?: number };
-    if (payload.signalId !== activeOrder.signalId) return;
+    const matched = activeOrders.find((o) => o.signalId === payload.signalId && o.status === 'OPEN');
+    if (!matched) return;
     const status = last.type as 'WIN' | 'LOSS' | 'DOJI';
-    setActiveOrder((prev) => (prev ? { ...prev, status, pnl: payload.pnl } : prev));
+    setActiveOrders((prev) => prev.map((o) => (o.signalId === payload.signalId ? { ...o, status, pnl: payload.pnl } : o)));
     // Aviso igual ao do site oficial: o resultado chega so quando a corretora confirma (poll
     // em segundo plano), entao sem isso o usuario so saberia pelo proprio app da Polarium.
     setResultToast({ status, pnl: payload.pnl });
-  }, [events, activeOrder]);
+  }, [events, activeOrders]);
 
-  // Esconde a FAIXA de status (preco/contagem/lucro-prejuizo) um tempo depois do resultado
-  // chegar — a linha tracejada no grafico e o marcador WIN/LOSS continuam (ficam como registro
-  // ate a proxima entrada), so essa faixa em cima some sozinha pra nao ficar poluindo a tela.
+  // Esconde a FAIXA de status (preco/contagem/lucro-prejuizo) um tempo depois da ULTIMA entrada
+  // aberta resolver — a linha tracejada no grafico e os marcadores WIN/LOSS continuam (ficam
+  // como registro ate a proxima entrada), so essa faixa em cima some sozinha. So dispara quando
+  // TODAS as entradas abertas ja tem resultado (nenhuma ainda em 'OPEN').
   useEffect(() => {
-    if (!activeOrder || activeOrder.status === 'OPEN') return;
+    if (activeOrders.length === 0 || activeOrders.some((o) => o.status === 'OPEN')) return;
     const id = setTimeout(() => setOrderBannerVisible(false), 8000);
     return () => clearTimeout(id);
-  }, [activeOrder]);
+  }, [activeOrders]);
 
   // Fecha o aviso de resultado sozinho depois de um tempo — nao fica preso na tela.
   useEffect(() => {
@@ -428,15 +432,20 @@ export function ChartPage() {
         setOrderStatus('placed');
         setOrderMessage(`Ordem enviada (${direction === 'CALL' ? 'compra' : 'venda'}).`);
         if (entryPrice !== null) {
-          setActiveOrder({
-            signalId: outcome.signalId,
-            direction,
-            entryPrice,
-            expiresAt,
-            amount: outcome.amount,
-            payoutPercentage: outcome.payoutPercentage,
-            status: 'OPEN',
-          });
+          // Acumula — nao substitui — pra permitir 2+ entradas simultaneas no mesmo ativo
+          // (cliques repetidos em Comprar/Vender), cada uma com seu proprio acompanhamento.
+          setActiveOrders((prev) => [
+            ...prev,
+            {
+              signalId: outcome.signalId,
+              direction,
+              entryPrice,
+              expiresAt,
+              amount: outcome.amount,
+              payoutPercentage: outcome.payoutPercentage,
+              status: 'OPEN',
+            },
+          ]);
           setOrderBannerVisible(true);
         }
       } else {
@@ -461,36 +470,40 @@ export function ChartPage() {
       text: 'ENTRADA',
     });
   }
-  // Entrada manual resolvida: marca a propria vela de entrada (M1 = 60s antes da expiracao)
-  // com o resultado e o valor, igual aos marcadores WIN/LOSS da estrategia.
-  if (activeOrder && activeOrder.status !== 'OPEN') {
-    const entryCandleFrom = activeOrder.expiresAt - 60;
-    const pnlText = activeOrder.pnl !== undefined ? ` ${activeOrder.pnl >= 0 ? '+' : ''}${formatMoney(activeOrder.pnl)}` : '';
+  // Cada entrada manual resolvida marca a sua PROPRIA vela de entrada (M1 = 60s antes da
+  // expiracao) com o resultado e o valor — 2+ entradas simultaneas geram 2+ marcadores.
+  for (const order of activeOrders) {
+    if (order.status === 'OPEN') continue;
+    const entryCandleFrom = order.expiresAt - 60;
+    const pnlText = order.pnl !== undefined ? ` ${order.pnl >= 0 ? '+' : ''}${formatMoney(order.pnl)}` : '';
     markers.push({
       time: entryCandleFrom,
-      position: activeOrder.direction === 'CALL' ? 'belowBar' : 'aboveBar',
-      color: activeOrder.status === 'WIN' ? '#22c55e' : activeOrder.status === 'LOSS' ? '#f43f5e' : '#94a3b8',
-      shape: activeOrder.status === 'WIN' ? 'arrowUp' : activeOrder.status === 'LOSS' ? 'arrowDown' : 'circle',
-      text: `${activeOrder.status}${pnlText}`,
+      position: order.direction === 'CALL' ? 'belowBar' : 'aboveBar',
+      color: order.status === 'WIN' ? '#22c55e' : order.status === 'LOSS' ? '#f43f5e' : '#94a3b8',
+      shape: order.status === 'WIN' ? 'arrowUp' : order.status === 'LOSS' ? 'arrowDown' : 'circle',
+      text: `${order.status}${pnlText}`,
     });
   }
   const currentPrice = liveCandle?.close ?? candles[candles.length - 1]?.close ?? null;
 
-  // Derivados pra exibir a entrada manual em acompanhamento (linha no grafico + faixa de
-  // status): tempo restante, se esta "no lucro" agora (preco atual vs preco de entrada, na
-  // direcao da ordem) e as estimativas de ganho/perda com o payout vigente no momento do clique.
-  const activeOrderLine: ActiveOrderLine | null = activeOrder
-    ? { entryPrice: activeOrder.entryPrice, result: activeOrder.status === 'OPEN' ? null : activeOrder.status }
-    : null;
-  const secondsToExpiry = activeOrder ? activeOrder.expiresAt - Math.floor(now.getTime() / 1000) : null;
-  const isInProfitNow =
-    activeOrder && currentPrice !== null
-      ? activeOrder.direction === 'CALL'
-        ? currentPrice > activeOrder.entryPrice
-        : currentPrice < activeOrder.entryPrice
-      : null;
-  const estimatedGain = activeOrder && activeOrder.payoutPercentage !== null ? activeOrder.amount * activeOrder.payoutPercentage : null;
-  const estimatedLoss = activeOrder ? activeOrder.amount : null;
+  // Uma linha por entrada, pro grafico desenhar todas simultaneamente.
+  const activeOrderLines: ActiveOrderLine[] = activeOrders.map((o) => ({
+    id: o.signalId,
+    entryPrice: o.entryPrice,
+    result: o.status === 'OPEN' ? null : o.status,
+  }));
+
+  // Totais agregados — "quanto tenho em jogo", "quanto ganho se tudo der WIN", "quanto ja
+  // realizei" — somando TODAS as entradas abertas no ativo atual, nao so a ultima.
+  const openOrders = activeOrders.filter((o) => o.status === 'OPEN');
+  const totalOpenAmount = openOrders.reduce((sum, o) => sum + o.amount, 0);
+  const totalEstimatedGain = openOrders.reduce(
+    (sum, o) => sum + (o.payoutPercentage !== null ? o.amount * o.payoutPercentage : 0),
+    0
+  );
+  const totalRealizedPnl = activeOrders
+    .filter((o) => o.status !== 'OPEN' && o.pnl !== undefined)
+    .reduce((sum, o) => sum + (o.pnl ?? 0), 0);
 
   // So os marcadores de RESULTADO (win/loss), em ordem cronologica — usado pra "voltar no
   // tempo" navegando ocorrencia por ocorrencia. Depende de `best` (nao do array `markers`
@@ -808,52 +821,84 @@ export function ChartPage() {
         <div className="px-3 sm:px-6 py-1 text-xs text-rose-400 border-b border-slate-800 bg-rose-950/20">{chartError}</div>
       )}
 
-      {/* Acompanhamento da entrada manual enviada: preco de entrada (mesma linha tracejada do
-          grafico), tempo restante at'e a vela de expiracao fechar, se esta no lucro/prejuizo
-          AGORA (comparando preco atual x preco de entrada) e quanto rende/perde no payout
-          vigente — ate o resultado real (WIN/LOSS/DOJI) chegar da corretora. */}
-      {activeOrder && orderBannerVisible && (
-        <div
-          className={`px-3 sm:px-6 py-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-b ${
-            activeOrder.status === 'WIN'
-              ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
-              : activeOrder.status === 'LOSS'
-                ? 'bg-rose-950/40 border-rose-800 text-rose-300'
-                : activeOrder.status === 'DOJI'
-                  ? 'bg-slate-800/60 border-slate-700 text-slate-300'
-                  : 'bg-slate-900 border-slate-800 text-slate-300'
-          }`}
-        >
-          <span className="font-bold">
-            {activeOrder.direction === 'CALL' ? '⬆ COMPRA' : '⬇ VENDA'} @ {formatPrice(activeOrder.entryPrice)}
-          </span>
-
-          {activeOrder.status === 'OPEN' ? (
-            <>
-              <span>
-                Expira em <span className="font-semibold text-white">{formatCountdown(secondsToExpiry ?? 0)}</span>
-              </span>
-              {isInProfitNow !== null && (
-                <span className={`font-semibold ${isInProfitNow ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {isInProfitNow ? '▲ No lucro agora' : '▼ No prejuízo agora'}
+      {/* Acompanhamento das entradas manuais enviadas (pode haver 2+ simultaneas no mesmo
+          ativo): preco de entrada (mesma linha tracejada do grafico), tempo restante ate a vela
+          de expiracao fechar, se esta no lucro/prejuizo AGORA e quanto rende/perde no payout
+          vigente — ate o resultado real (WIN/LOSS/DOJI) chegar da corretora. Com 2+ entradas,
+          uma linha de totais soma tudo (valor em jogo, ganho/perda potencial, resultado ja
+          realizado) alem do detalhe de cada uma. */}
+      {activeOrders.length > 0 && orderBannerVisible && (
+        <div className="px-3 sm:px-6 py-1.5 text-xs border-b border-slate-800 bg-slate-900 text-slate-300 space-y-1">
+          {activeOrders.length > 1 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-bold pb-1 border-b border-slate-700/60">
+              <span>{activeOrders.length} entradas</span>
+              {openOrders.length > 0 && (
+                <>
+                  <span>
+                    Total em jogo: <span className="text-white">{formatMoney(totalOpenAmount)}</span>
+                  </span>
+                  <span className="text-emerald-400">Ganho total se tudo WIN: +{formatMoney(totalEstimatedGain)}</span>
+                  <span className="text-rose-400">Perda total se tudo LOSS: -{formatMoney(totalOpenAmount)}</span>
+                </>
+              )}
+              {activeOrders.some((o) => o.status !== 'OPEN') && (
+                <span className={totalRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                  Resultado total: {totalRealizedPnl >= 0 ? `+${formatMoney(totalRealizedPnl)}` : formatMoney(totalRealizedPnl)}
                 </span>
               )}
-              <span>
-                Ganho se WIN:{' '}
-                <span className="font-semibold text-emerald-400">{estimatedGain !== null ? `+${formatMoney(estimatedGain)}` : '—'}</span>
-              </span>
-              <span>
-                Perda se LOSS: <span className="font-semibold text-rose-400">-{formatMoney(estimatedLoss ?? 0)}</span>
-              </span>
-            </>
-          ) : (
-            <span className="font-bold">
-              Resultado: {activeOrder.status}
-              {activeOrder.pnl !== undefined && (
-                <span className="ml-2">{activeOrder.pnl >= 0 ? `+${formatMoney(activeOrder.pnl)}` : formatMoney(activeOrder.pnl)}</span>
-              )}
-            </span>
+            </div>
           )}
+
+          {activeOrders.map((order) => {
+            const secondsToExpiry = order.expiresAt - Math.floor(now.getTime() / 1000);
+            const isInProfitNow =
+              currentPrice !== null
+                ? order.direction === 'CALL'
+                  ? currentPrice > order.entryPrice
+                  : currentPrice < order.entryPrice
+                : null;
+            const estimatedGain = order.payoutPercentage !== null ? order.amount * order.payoutPercentage : null;
+            return (
+              <div key={order.signalId} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span className="font-bold">
+                  {order.direction === 'CALL' ? '⬆ COMPRA' : '⬇ VENDA'} @ {formatPrice(order.entryPrice)} ({formatMoney(order.amount)})
+                </span>
+
+                {order.status === 'OPEN' ? (
+                  <>
+                    <span>
+                      Expira em <span className="font-semibold text-white">{formatCountdown(secondsToExpiry)}</span>
+                    </span>
+                    {isInProfitNow !== null && (
+                      <span className={`font-semibold ${isInProfitNow ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {isInProfitNow ? '▲ No lucro agora' : '▼ No prejuízo agora'}
+                      </span>
+                    )}
+                    <span>
+                      Ganho se WIN:{' '}
+                      <span className="font-semibold text-emerald-400">
+                        {estimatedGain !== null ? `+${formatMoney(estimatedGain)}` : '—'}
+                      </span>
+                    </span>
+                    <span>
+                      Perda se LOSS: <span className="font-semibold text-rose-400">-{formatMoney(order.amount)}</span>
+                    </span>
+                  </>
+                ) : (
+                  <span
+                    className={`font-bold ${
+                      order.status === 'WIN' ? 'text-emerald-400' : order.status === 'LOSS' ? 'text-rose-400' : 'text-slate-400'
+                    }`}
+                  >
+                    Resultado: {order.status}
+                    {order.pnl !== undefined && (
+                      <span className="ml-2">{order.pnl >= 0 ? `+${formatMoney(order.pnl)}` : formatMoney(order.pnl)}</span>
+                    )}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -868,7 +913,7 @@ export function ChartPage() {
               candles={candles}
               liveCandle={liveCandle}
               markers={markers}
-              activeOrder={activeOrderLine}
+              activeOrders={activeOrderLines}
               fill
             />
           ) : (

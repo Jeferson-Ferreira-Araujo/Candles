@@ -17,6 +17,8 @@ import {
 import type { Candle } from '@polarium12c/shared';
 
 export interface ActiveOrderLine {
+  /** signalId da ordem — identifica a linha entre renders (podem existir 2+ simultaneas). */
+  id: string;
   /** Preco no momento da entrada — onde a linha tracejada e desenhada. */
   entryPrice: number;
   /** 'WIN' | 'LOSS' | 'DOJI' colore a linha pelo resultado final; null = ainda em aberto. */
@@ -37,8 +39,9 @@ interface Props {
   /** Tick mais recente (fechado ou ainda em formacao) — atualiza so a ultima vela, sem resetar zoom/posicao. */
   liveCandle?: Candle | null;
   markers?: ChartMarker[];
-  /** Entrada em aberto/recem-resolvida — desenha uma linha tracejada no preco de entrada. null = nenhuma. */
-  activeOrder?: ActiveOrderLine | null;
+  /** Entradas em aberto/recem-resolvidas — uma linha tracejada por entrada, no respectivo preco.
+   * Suporta 2+ simultaneas (cliques repetidos em Comprar/Vender), nao so uma por vez. */
+  activeOrders?: ActiveOrderLine[];
   /** Altura fixa em px — ignorado quando `fill` esta ligado. */
   height?: number;
   /** Em vez de uma altura fixa, ocupa 100% do container pai (que precisa ter altura propria,
@@ -68,14 +71,14 @@ function toCandlestickData(c: Candle): CandlestickData<Time> {
  * grafico — agora a visao SO muda quando o usuario mexe nela ou aperta "Ir para agora".
  */
 export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleChart(
-  { candles, liveCandle, markers, activeOrder, height = 360, fill = false },
+  { candles, liveCandle, markers, activeOrders, height = 360, fill = false },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-  const activeOrderLineRef = useRef<IPriceLine | null>(null);
+  const activeOrderLinesRef = useRef<Map<string, IPriceLine>>(new Map());
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -123,6 +126,7 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
       chartRef.current = null;
       seriesRef.current = null;
       markersPluginRef.current = null;
+      activeOrderLinesRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -156,28 +160,43 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
     markersPluginRef.current.setMarkers(seriesMarkers);
   }, [markers]);
 
-  // Linha tracejada no preco de entrada da ordem ativa — cinza enquanto aberta, verde/vermelha
-  // quando o resultado chega. Removida quando activeOrder vira null (nova entrada ou saida da tela).
+  // Uma linha tracejada por entrada em aberto/recem-resolvida — cinza enquanto aberta,
+  // verde/vermelha quando o resultado chega. Reconcilia pelo `id` (signalId): remove as que
+  // sairam da lista, cria as novas, atualiza a cor das que mudaram de resultado — assim 2+
+  // entradas simultaneas (cliques repetidos em Comprar/Vender) aparecem cada uma na sua linha.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
+    const current = activeOrderLinesRef.current;
+    const wanted = new Map((activeOrders ?? []).map((o) => [o.id, o]));
 
-    if (activeOrderLineRef.current) {
-      series.removePriceLine(activeOrderLineRef.current);
-      activeOrderLineRef.current = null;
+    for (const [id, line] of current) {
+      if (!wanted.has(id)) {
+        series.removePriceLine(line);
+        current.delete(id);
+      }
     }
 
-    if (!activeOrder) return;
-    const color = activeOrder.result === 'WIN' ? '#22c55e' : activeOrder.result === 'LOSS' ? '#f43f5e' : '#facc15';
-    activeOrderLineRef.current = series.createPriceLine({
-      price: activeOrder.entryPrice,
-      color,
-      lineWidth: 2,
-      lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: 'Entrada',
-    });
-  }, [activeOrder]);
+    for (const order of wanted.values()) {
+      const color = order.result === 'WIN' ? '#22c55e' : order.result === 'LOSS' ? '#f43f5e' : '#facc15';
+      const existing = current.get(order.id);
+      if (existing) {
+        existing.applyOptions({ price: order.entryPrice, color });
+      } else {
+        current.set(
+          order.id,
+          series.createPriceLine({
+            price: order.entryPrice,
+            color,
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'Entrada',
+          })
+        );
+      }
+    }
+  }, [activeOrders]);
 
   useImperativeHandle(ref, () => ({
     goToRealTime: () => chartRef.current?.timeScale().scrollToRealTime(),
