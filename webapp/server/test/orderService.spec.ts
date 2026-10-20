@@ -31,13 +31,16 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, mode: 'DEMO', robotActive: true, entryAmount: 5, ...overrides };
 }
 
-async function setup(settingsOverrides: Partial<Settings> = {}) {
+async function setup(
+  settingsOverrides: Partial<Settings> = {},
+  serviceOptions: { pollIntervalMs?: number; maxPollAttempts?: number } = {}
+) {
   const db = await getTestDb();
   await resetDb(db);
   const broker = new MockBrokerAdapter({ payout: 0.85, initialBalance: 1000 });
   await broker.authenticate();
   let settings = makeSettings(settingsOverrides);
-  const service = new OrderService(db, broker, async () => settings, { pollIntervalMs: 5, maxPollAttempts: 30 });
+  const service = new OrderService(db, broker, async () => settings, { pollIntervalMs: 5, maxPollAttempts: 30, ...serviceOptions });
   return {
     db,
     broker,
@@ -162,5 +165,89 @@ describe('OrderService', () => {
 
     const signalId2 = `12CANDLES-${OTHER_ACTIVE}-${window2Other[window2Other.length - 1]!.to}-PUT`;
     expect((await getSignal(db, signalId2))?.status).toBe('BLOCKED');
+  });
+
+  it('Gale 1: LOSS na entrada original dispara reentrada automatica com o DOBRO do valor', async () => {
+    // Janela de poll bem mais generosa que o padrao: a reentrada de Gale so e colocada DEPOIS
+    // que a 1a ordem resolve (uma cadeia de chamadas assincronas — safety context, insert,
+    // placeOrder), e so entao comeca a procurar a PROPRIA resolucao — com pollIntervalMs/
+    // maxPollAttempts pequenos (padrao dos outros testes) isso pode facilmente estourar sob
+    // carga da maquina, like um falso negativo por timing, nao por bug real.
+    const { db, broker, service } = await setup(
+      { galeEnabled: true, galeMaxLevels: 1, entryAmount: 5 },
+      { pollIntervalMs: 10, maxPollAttempts: 300 }
+    );
+    const window = buildWindow(1_800_080_000);
+    for (const c of window) broker.pushLiveCandle(ACTIVE, c);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
+
+    const lastCandle = window[window.length - 1]!;
+    // Entrada original (PUT, amount 5) resolve como LOSS (fecha em alta).
+    const lossCandle = green(lastCandle.to);
+    broker.pushLiveCandle(ACTIVE, lossCandle);
+    // Da tempo pro poll da 1a ordem detectar o LOSS e disparar (e CONFIRMAR, ida e volta real
+    // com o broker) a reentrada de Gale antes de empurrar a vela que vai resolve-la.
+    await new Promise((r) => setTimeout(r, 800));
+
+    // A reentrada de Gale (amount 10, mesma direcao PUT) deve ter sido enviada automaticamente,
+    // com openCandle = lossCandle — resolve no candle seguinte a ele. Fecha em baixa -> WIN.
+    broker.pushLiveCandle(ACTIVE, red(lossCandle.to));
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const { rows } = await db.query('SELECT * FROM orders ORDER BY requested_at ASC');
+    expect(rows).toHaveLength(2);
+    expect(Number(rows[0].amount)).toBe(5);
+    expect(Number(rows[0].gale_level)).toBe(0);
+    expect(rows[0].result).toBe('LOSS');
+    expect(Number(rows[1].amount)).toBe(10);
+    expect(Number(rows[1].gale_level)).toBe(1);
+    expect(rows[1].result).toBe('WIN');
+    expect(rows[1].root_signal_id).toBe(rows[0].signal_id);
+
+    const daily = await getDailyResult(db, new Date().toISOString().slice(0, 10));
+    expect(daily.operationsCount).toBe(2);
+    expect(daily.wins).toBe(1);
+    expect(daily.losses).toBe(1);
+    expect(daily.pnl).toBeCloseTo(-5 + 10 * 0.85, 5);
+  });
+
+  it('sem Gale habilitado, uma LOSS nao dispara reentrada nenhuma', async () => {
+    const { db, broker, service } = await setup({ galeEnabled: false });
+    const window = buildWindow(1_800_090_000);
+    for (const c of window) broker.pushLiveCandle(ACTIVE, c);
+    await service.handleConfirmed(ACTIVE, window, 0.5, DIRECTION);
+
+    broker.pushLiveCandle(ACTIVE, green(window[window.length - 1]!.to));
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const { rows } = await db.query('SELECT * FROM orders');
+    expect(rows).toHaveLength(1);
+  });
+
+  it('placeManualOrder envia uma ordem avulsa (sem padrao de 12 velas por tras) passando pelo SafetyGate', async () => {
+    const { db, broker, service } = await setup();
+    broker.pushLiveCandle(ACTIVE, green(1_800_100_000));
+
+    const outcome = await service.placeManualOrder(ACTIVE, 'CALL');
+    expect(outcome.allowed).toBe(true);
+    expect(outcome.blockedBy).toEqual([]);
+
+    const { rows } = await db.query('SELECT * FROM orders WHERE signal_id = $1', [outcome.signalId]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].gale_level).toBe(0);
+    expect(rows[0].root_signal_id).toBe(outcome.signalId);
+
+    const status = (await getSignal(db, outcome.signalId))?.status;
+    expect(status).toBe('ORDER_CONFIRMED');
+  });
+
+  it('placeManualOrder e bloqueado pelo mesmo SafetyGate (ex.: kill switch)', async () => {
+    const { db, service } = await setup({ robotActive: false });
+    const outcome = await service.placeManualOrder(ACTIVE, 'CALL');
+    expect(outcome.allowed).toBe(false);
+    expect(outcome.blockedBy).toContain('ROBOT_STOPPED');
+
+    const { rows } = await db.query('SELECT * FROM orders WHERE signal_id = $1', [outcome.signalId]);
+    expect(rows).toHaveLength(0);
   });
 });

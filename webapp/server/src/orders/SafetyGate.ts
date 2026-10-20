@@ -32,7 +32,7 @@ export interface SafetyContext {
 
 export type SafetyBlockReason =
   | 'DUPLICATE_SIGNAL'
-  | 'MODE_NOT_DEMO'
+  | 'MODE_OBSERVATION'
   | 'ROBOT_STOPPED'
   | 'CONNECTION_UNHEALTHY'
   | 'SESSION_INVALID'
@@ -56,8 +56,10 @@ export function evaluateSafety(ctx: SafetyContext): SafetyResult {
 
   if (ctx.orderAlreadyExistsForSignal) blockedBy.push('DUPLICATE_SIGNAL');
 
-  // REAL nunca opera nesta versao; OBSERVATION so detecta/registra por definicao.
-  if (ctx.mode !== 'DEMO') blockedBy.push('MODE_NOT_DEMO');
+  // OBSERVATION so detecta/registra por definicao, nunca opera. DEMO e REAL sao tratados
+  // igual daqui pra baixo — a diferenca de saldo/risco fica inteiramente a cargo de qual
+  // sessao/credencial o BrokerAdapter esta usando, nao desta funcao.
+  if (ctx.mode === 'OBSERVATION') blockedBy.push('MODE_OBSERVATION');
 
   if (!ctx.robotActive) blockedBy.push('ROBOT_STOPPED');
   if (!ctx.connectionHealthy) blockedBy.push('CONNECTION_UNHEALTHY');

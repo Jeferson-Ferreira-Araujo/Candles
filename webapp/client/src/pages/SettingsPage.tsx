@@ -11,8 +11,8 @@ interface OutletCtx {
 
 const MODE_OPTIONS: { value: AppMode; label: string; hint: string }[] = [
   { value: 'OBSERVATION', label: 'OBSERVATION', hint: 'Detecta e registra, sem enviar ordens.' },
-  { value: 'DEMO', label: 'DEMO', hint: 'Executa automaticamente na conta de prática (dinheiro fictício da corretora).' },
-  { value: 'REAL', label: 'REAL', hint: 'Bloqueado nesta versão.' },
+  { value: 'DEMO', label: 'DEMO', hint: 'Envia ordens na conta de prática (dinheiro fictício da corretora).' },
+  { value: 'REAL', label: 'REAL', hint: '⚠️ Envia ordens com DINHEIRO DE VERDADE da sua conta.' },
 ];
 
 export function SettingsPage() {
@@ -61,11 +61,19 @@ export function SettingsPage() {
           {MODE_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              disabled={opt.value === 'REAL'}
-              onClick={() => setForm({ ...form, mode: opt.value })}
-              className={`text-left rounded-lg border p-3 transition-colors ${
-                form.mode === opt.value ? 'border-emerald-600 bg-emerald-950/40' : 'border-slate-700 bg-slate-950'
-              } ${opt.value === 'REAL' ? 'opacity-50 cursor-not-allowed' : 'hover:border-slate-500'}`}
+              onClick={() => {
+                if (opt.value === 'REAL' && form.mode !== 'REAL') {
+                  if (!window.confirm('Mudar para REAL faz o app enviar ordens com dinheiro de verdade da sua conta. Confirma?')) return;
+                }
+                setForm({ ...form, mode: opt.value });
+              }}
+              className={`text-left rounded-lg border p-3 transition-colors hover:border-slate-500 ${
+                form.mode === opt.value
+                  ? opt.value === 'REAL'
+                    ? 'border-rose-600 bg-rose-950/40'
+                    : 'border-emerald-600 bg-emerald-950/40'
+                  : 'border-slate-700 bg-slate-950'
+              }`}
             >
               <div className="font-semibold text-sm">{opt.label}</div>
               <div className="text-xs text-slate-400 mt-1">{opt.hint}</div>
@@ -115,13 +123,20 @@ export function SettingsPage() {
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2"
             />
           </label>
-          <label className="text-sm flex items-end gap-2">
-            <input
-              type="checkbox"
-              checked={form.galeEnabled}
-              onChange={(e) => setForm({ ...form, galeEnabled: e.target.checked, galeMaxLevels: e.target.checked ? 1 : 0 })}
-            />
-            <span>Gale (no máximo 1 nível quando ativado)</span>
+          <label className="text-sm">
+            <span className="block text-slate-400 mb-1">Gale (reentrada após LOSS, dobra o valor)</span>
+            <select
+              value={form.galeEnabled ? form.galeMaxLevels : 0}
+              onChange={(e) => {
+                const level = Number(e.target.value) as 0 | 1 | 2;
+                setForm({ ...form, galeEnabled: level > 0, galeMaxLevels: level });
+              }}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2"
+            >
+              <option value={0}>Sem Gale</option>
+              <option value={1}>Gale 1</option>
+              <option value={2}>Gale 2</option>
+            </select>
           </label>
         </div>
       </section>

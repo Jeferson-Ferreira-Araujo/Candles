@@ -173,6 +173,13 @@ export const api = {
 
   getOrders: (limit = 200) => req(`/api/orders?limit=${limit}`).then((r) => json<OrderRecord[]>(r)),
 
+  placeManualOrder: (activeId: number, direction: 'CALL' | 'PUT') =>
+    req('/api/orders/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeId, direction }),
+    }).then((r) => json<{ allowed: boolean; blockedBy: string[]; signalId: string }>(r)),
+
   getAssets: () => req('/api/assets').then((r) => json<AssetInfo[]>(r)),
 
   getCandles: (activeId: number, days: number) =>

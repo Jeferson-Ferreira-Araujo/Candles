@@ -184,8 +184,8 @@ app.put('/api/settings', async (req, res) => {
     res.status(400).json({ error: 'entryAmount minimo e 5.' });
     return;
   }
-  if (next.galeEnabled && next.galeMaxLevels > 1) {
-    res.status(400).json({ error: 'galeMaxLevels maximo e 1.' });
+  if (next.galeEnabled && (next.galeMaxLevels < 1 || next.galeMaxLevels > 2)) {
+    res.status(400).json({ error: 'galeMaxLevels deve ser 1 ou 2 quando o Gale esta ativado.' });
     return;
   }
   if (current.robotActive && !next.robotActive) {
@@ -412,6 +412,27 @@ app.delete('/api/patterns/:id', async (req, res) => {
 app.get('/api/orders', async (req, res) => {
   const limit = Number(req.query.limit ?? 200);
   res.json(await listOrders(db, limit));
+});
+
+// Ordem manual — clique do usuario nos botoes Comprar/Vender. Passa pelo MESMO SafetyGate
+// de qualquer outra ordem (kill switch, stop win/loss, saldo, etc.) — nunca pula a checagem
+// so porque foi um clique manual.
+app.post('/api/orders/manual', async (req, res) => {
+  const { activeId, direction } = req.body as { activeId?: number; direction?: Direction };
+  if (!orderService) {
+    res.status(400).json({ error: 'Serviço de ordens não está pronto (faça login primeiro).' });
+    return;
+  }
+  if (!Number.isFinite(activeId) || (direction !== 'CALL' && direction !== 'PUT')) {
+    res.status(400).json({ error: 'Informe activeId e direction ("CALL" ou "PUT").' });
+    return;
+  }
+  try {
+    const outcome = await orderService.placeManualOrder(activeId!, direction);
+    res.json(outcome);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 app.get('/api/events', async (req, res) => {

@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS orders (
   mode TEXT NOT NULL
 );
 
+-- Gale (reentrada apos LOSS, valor dobrado a cada nivel) — adicionado depois do lancamento
+-- inicial, por isso via ALTER (idempotente, seguro rodar a cada subida do servidor, igual
+-- as CREATE TABLE IF NOT EXISTS acima).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS gale_level INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS root_signal_id TEXT;
+UPDATE orders SET root_signal_id = signal_id WHERE root_signal_id IS NULL;
+ALTER TABLE orders ALTER COLUMN root_signal_id SET NOT NULL;
+
 CREATE TABLE IF NOT EXISTS backtests (
   id TEXT PRIMARY KEY,
   active_ids_json JSONB NOT NULL,

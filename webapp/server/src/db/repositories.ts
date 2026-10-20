@@ -105,8 +105,8 @@ export async function insertOrderIfAbsent(db: Db, o: OrderRecord): Promise<{ ins
 
   try {
     await db.query(
-      `INSERT INTO orders (id, signal_id, broker_order_id, active_id, direction, amount, status, requested_at, confirmed_at, resolved_at, result, payout_percentage, pnl, mode)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      `INSERT INTO orders (id, signal_id, broker_order_id, active_id, direction, amount, status, requested_at, confirmed_at, resolved_at, result, payout_percentage, pnl, mode, gale_level, root_signal_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         o.id,
         o.signalId,
@@ -122,6 +122,8 @@ export async function insertOrderIfAbsent(db: Db, o: OrderRecord): Promise<{ ins
         o.payoutPercentage ?? null,
         o.pnl ?? null,
         o.mode,
+        o.galeLevel,
+        o.rootSignalId,
       ]
     );
     return { inserted: true, order: o };
@@ -150,6 +152,8 @@ function rowToOrder(row: Record<string, unknown>): OrderRecord {
     payoutPercentage: (row.payout_percentage as number | null) ?? undefined,
     pnl: (row.pnl as number | null) ?? undefined,
     mode: row.mode as OrderRecord['mode'],
+    galeLevel: Number(row.gale_level ?? 0),
+    rootSignalId: (row.root_signal_id as string | null) ?? (row.signal_id as string),
   };
 }
 

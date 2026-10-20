@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssetInfo, Candle, ClassicStrategyId, Direction } from '@polarium12c/shared';
+import type { AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
 import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
 import { api, type AssetScanRanking } from '../api.js';
 import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
@@ -62,6 +62,10 @@ export function ChartPage() {
   const [scanRanking, setScanRanking] = useState<AssetScanRanking[]>([]);
   const [showRanking, setShowRanking] = useState(false);
   const [resultIndex, setResultIndex] = useState<number | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
+  const [orderMessage, setOrderMessage] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
   const { events, lastCandleUpdate } = useLiveSocket();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
@@ -166,6 +170,14 @@ export function ChartPage() {
   useEffect(() => {
     api.getAssets().then(setAssets).catch(() => {});
     api.getActivePattern().then((p) => setHasActivePattern(!!p)).catch(() => {});
+    api.getSettings().then(setSettings).catch(() => {});
+  }, []);
+
+  // Relogio ao vivo — pra entrar manualmente SEM delay/gap, o usuario precisa ver a hora
+  // exata, nao so "confiar" no grafico (que pode ter alguns ms de atraso de rede ate chegar).
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
   }, []);
 
   // Analise inicial automatica — so uma vez, assim que a lista de ativos chega.
@@ -221,6 +233,60 @@ export function ChartPage() {
     setDays(SCAN_DAYS);
     setStrategyMode(row.strategyId);
     loadChartFor(row.activeId, row.strategyId, SCAN_DAYS);
+  }
+
+  async function updateSettingsQuick(patch: Partial<Settings>) {
+    if (!settings) return;
+    const prev = settings;
+    setSettings({ ...settings, ...patch }); // feedback imediato, otimista
+    try {
+      const next = await api.saveSettings(patch);
+      setSettings(next);
+    } catch (err) {
+      setSettings(prev); // desfaz se o servidor recusar
+      setOrderMessage(err instanceof Error ? err.message : String(err));
+      setOrderStatus('error');
+    }
+  }
+
+  function changeMode(mode: AppMode) {
+    if (mode === 'REAL' && settings?.mode !== 'REAL') {
+      if (!window.confirm('Mudar para REAL faz o app enviar ordens com DINHEIRO DE VERDADE da sua conta Polarium. Confirma?')) return;
+    }
+    updateSettingsQuick({ mode });
+  }
+
+  function changeGale(level: 0 | 1 | 2) {
+    updateSettingsQuick({ galeEnabled: level > 0, galeMaxLevels: level });
+  }
+
+  // Envio MANUAL de ordem — clique em Comprar/Vender. SEM confirmacao aqui, nem em REAL: a
+  // confirmacao de "dinheiro de verdade" ja acontece uma unica vez, no momento de TROCAR pra
+  // REAL (ver changeMode) — depois disso, cada clique precisa sair na hora, sem dialogo, sem
+  // delay, pra entrar exatamente no segundo certo. Em OBSERVATION, nem tenta (o SafetyGate do
+  // servidor bloquearia de qualquer forma, mas aqui evitamos a chamada e explicamos o motivo).
+  async function placeOrder(direction: Direction) {
+    if (watchingAssetId === null || !settings) return;
+    if (settings.mode === 'OBSERVATION') {
+      setOrderStatus('blocked');
+      setOrderMessage('Modo OBSERVATION nunca envia ordem — troque pra DEMO ou REAL.');
+      return;
+    }
+    setOrderStatus('placing');
+    setOrderMessage(null);
+    try {
+      const outcome = await api.placeManualOrder(watchingAssetId, direction);
+      if (outcome.allowed) {
+        setOrderStatus('placed');
+        setOrderMessage(`Ordem enviada (${direction === 'CALL' ? 'compra' : 'venda'}).`);
+      } else {
+        setOrderStatus('blocked');
+        setOrderMessage(`Bloqueada: ${outcome.blockedBy.join(', ')}`);
+      }
+    } catch (err) {
+      setOrderStatus('error');
+      setOrderMessage(err instanceof Error ? err.message : String(err));
+    }
   }
 
   const markers: ChartMarker[] = best && best !== 'loading' ? [...best.markers] : [];
@@ -499,26 +565,19 @@ export function ChartPage() {
           )}
         </div>
 
-        <div className="hidden sm:flex w-24 md:w-32 shrink-0 border-l border-slate-800 bg-slate-950 flex-col items-stretch justify-center gap-2 p-2">
-          <button
-            type="button"
-            title="Este app apenas monitora — não envia ordens."
-            className={`rounded-lg py-3 text-sm font-bold tracking-wide transition-colors ${
-              pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
-            }`}
-          >
-            VENDER
-          </button>
-          <button
-            type="button"
-            title="Este app apenas monitora — não envia ordens."
-            className={`rounded-lg py-3 text-sm font-bold tracking-wide transition-colors ${
-              pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
-            }`}
-          >
-            COMPRAR
-          </button>
-          <div className="pt-2 text-center text-[11px] text-slate-400 space-y-1">
+        <div className="hidden sm:flex w-28 md:w-40 shrink-0 border-l border-slate-800 bg-slate-950 flex-col gap-2 p-2 overflow-y-auto">
+          <TradePanel
+            settings={settings}
+            now={now}
+            pendingSignal={pendingSignal}
+            orderStatus={orderStatus}
+            onBuy={() => placeOrder('CALL')}
+            onSell={() => placeOrder('PUT')}
+            onChangeMode={changeMode}
+            onChangeAmount={(amount) => updateSettingsQuick({ entryAmount: amount })}
+            onChangeGale={changeGale}
+          />
+          <div className="pt-1 text-center text-[11px] text-slate-400 space-y-1">
             <div className="truncate font-medium text-slate-200">{nameOf(selectedAssetId) || '—'}</div>
             <div>{currentPrice !== null ? formatPrice(currentPrice) : '—'}</div>
             {best && best !== 'loading' && <div className="text-emerald-400 font-semibold">{formatPct(best.winRate)}</div>}
@@ -526,28 +585,34 @@ export function ChartPage() {
         </div>
       </div>
 
+      {orderMessage && (
+        <div
+          className={`px-3 sm:px-6 py-1 text-xs border-t ${
+            orderStatus === 'placed'
+              ? 'text-emerald-400 border-emerald-900 bg-emerald-950/20'
+              : 'text-rose-400 border-rose-900 bg-rose-950/20'
+          }`}
+        >
+          {orderMessage}
+        </div>
+      )}
+
       {/* Barra inferior — so em celular em pe (sm:hidden), onde nao ha largura pros botoes
           ficarem do lado sem espremer o grafico. */}
-      <div className="sm:hidden border-t border-slate-800 bg-slate-950 px-3 py-2.5 flex items-center gap-3 flex-wrap">
-        <button
-          type="button"
-          title="Este app apenas monitora — não envia ordens."
-          className={`order-2 flex-1 rounded-lg px-4 py-2.5 text-sm font-bold tracking-wide transition-colors ${
-            pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
-          }`}
-        >
-          VENDER
-        </button>
-        <button
-          type="button"
-          title="Este app apenas monitora — não envia ordens."
-          className={`order-3 flex-1 rounded-lg px-4 py-2.5 text-sm font-bold tracking-wide transition-colors ${
-            pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
-          }`}
-        >
-          COMPRAR
-        </button>
-        <div className="order-1 w-full flex items-center gap-4 text-xs text-slate-400">
+      <div className="sm:hidden border-t border-slate-800 bg-slate-950 px-3 py-2.5">
+        <TradePanel
+          settings={settings}
+          now={now}
+          pendingSignal={pendingSignal}
+          orderStatus={orderStatus}
+          horizontal
+          onBuy={() => placeOrder('CALL')}
+          onSell={() => placeOrder('PUT')}
+          onChangeMode={changeMode}
+          onChangeAmount={(amount) => updateSettingsQuick({ entryAmount: amount })}
+          onChangeGale={changeGale}
+        />
+        <div className="mt-2 flex items-center gap-4 text-xs text-slate-400">
           <div>
             <div className="text-slate-500">Ativo</div>
             <div className="text-slate-200 font-medium">{nameOf(selectedAssetId) || '—'}</div>
@@ -563,6 +628,117 @@ export function ChartPage() {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+interface TradePanelProps {
+  settings: Settings | null;
+  now: Date;
+  pendingSignal: Direction | null;
+  orderStatus: 'idle' | 'placing' | 'placed' | 'blocked' | 'error';
+  horizontal?: boolean;
+  onBuy: () => void;
+  onSell: () => void;
+  onChangeMode: (mode: AppMode) => void;
+  onChangeAmount: (amount: number) => void;
+  onChangeGale: (level: 0 | 1 | 2) => void;
+}
+
+/** Relogio + modo (Demo/Real) + valor + Gale + botoes Comprar/Vender — tudo que precisa pra
+ * entrar manualmente sem sair da tela do grafico. Usado tanto na coluna lateral (telas
+ * largas) quanto na barra inferior (celular em pe), so muda o arranjo (`horizontal`). */
+function TradePanel({
+  settings,
+  now,
+  pendingSignal,
+  orderStatus,
+  horizontal,
+  onBuy,
+  onSell,
+  onChangeMode,
+  onChangeAmount,
+  onChangeGale,
+}: TradePanelProps) {
+  const placing = orderStatus === 'placing';
+  const timeStr = now.toLocaleTimeString('pt-BR', { hour12: false });
+  const secondsLeft = 60 - now.getSeconds(); // segundos ate a vela M1 atual fechar
+
+  return (
+    <div className={horizontal ? 'flex items-stretch gap-2' : 'space-y-2'}>
+      <div className={horizontal ? 'flex items-center gap-2 text-xs' : 'text-center'}>
+        <div className="font-mono text-base font-semibold text-slate-100 tabular-nums">{timeStr}</div>
+        <div className={`text-[10px] ${secondsLeft <= 5 ? 'text-amber-400 font-semibold' : 'text-slate-500'}`}>
+          {secondsLeft}s p/ fechar
+        </div>
+      </div>
+
+      <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
+        <button
+          type="button"
+          onClick={() => onChangeMode('DEMO')}
+          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold border ${
+            settings?.mode === 'DEMO' ? 'bg-sky-700 border-sky-500 text-white' : 'border-slate-700 text-slate-400'
+          }`}
+        >
+          DEMO
+        </button>
+        <button
+          type="button"
+          onClick={() => onChangeMode('REAL')}
+          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold border ${
+            settings?.mode === 'REAL' ? 'bg-rose-700 border-rose-500 text-white' : 'border-slate-700 text-slate-400'
+          }`}
+        >
+          REAL
+        </button>
+      </div>
+
+      <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
+        <input
+          type="number"
+          min={5}
+          value={settings?.entryAmount ?? ''}
+          onChange={(e) => onChangeAmount(Math.max(5, Number(e.target.value)))}
+          className="w-16 bg-slate-900 border border-slate-700 rounded-md px-1.5 py-1 text-xs"
+          title="Valor da entrada (R$)"
+        />
+        <select
+          value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
+          onChange={(e) => onChangeGale(Number(e.target.value) as 0 | 1 | 2)}
+          className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-1 py-1 text-xs"
+          title="Gale (reentrada após LOSS)"
+        >
+          <option value={0}>Sem Gale</option>
+          <option value={1}>Gale 1</option>
+          <option value={2}>Gale 2</option>
+        </select>
+      </div>
+
+      <div className={horizontal ? 'flex-1 flex items-center gap-2' : 'space-y-1.5'}>
+        <button
+          type="button"
+          onClick={onSell}
+          disabled={placing}
+          title={settings?.mode === 'REAL' ? 'Envia ordem com dinheiro de verdade' : 'Envia ordem (conta demo)'}
+          className={`flex-1 rounded-lg py-2.5 text-sm font-bold tracking-wide transition-colors disabled:opacity-50 ${
+            pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
+          }`}
+        >
+          VENDER
+        </button>
+        <button
+          type="button"
+          onClick={onBuy}
+          disabled={placing}
+          title={settings?.mode === 'REAL' ? 'Envia ordem com dinheiro de verdade' : 'Envia ordem (conta demo)'}
+          className={`flex-1 rounded-lg py-2.5 text-sm font-bold tracking-wide transition-colors disabled:opacity-50 ${
+            pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
+          }`}
+        >
+          COMPRAR
+        </button>
       </div>
     </div>
   );

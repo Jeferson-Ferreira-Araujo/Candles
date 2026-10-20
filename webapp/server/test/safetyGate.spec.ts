@@ -44,13 +44,13 @@ describe('SafetyGate — na duvida, nao operar', () => {
   it('bloqueia em modo OBSERVATION', () => {
     const result = evaluateSafety(baseContext({ mode: 'OBSERVATION' }));
     expect(result.allowed).toBe(false);
-    expect(result.blockedBy).toContain('MODE_NOT_DEMO');
+    expect(result.blockedBy).toContain('MODE_OBSERVATION');
   });
 
-  it('bloqueia em modo REAL (nunca opera nesta versao, mesmo se tudo mais estiver ok)', () => {
+  it('permite em modo REAL quando tudo mais esta ok (dinheiro de verdade — mesmas regras do DEMO)', () => {
     const result = evaluateSafety(baseContext({ mode: 'REAL' }));
-    expect(result.allowed).toBe(false);
-    expect(result.blockedBy).toContain('MODE_NOT_DEMO');
+    expect(result.allowed).toBe(true);
+    expect(result.blockedBy).toEqual([]);
   });
 
   it('bloqueia quando o robo esta parado (kill switch)', () => {

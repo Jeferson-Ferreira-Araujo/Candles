@@ -118,12 +118,16 @@ export interface OrderRecord {
   payoutPercentage?: number;
   pnl?: number;
   mode: AppMode;
+  /** 0 = entrada original, 1/2 = reentrada de Gale apos LOSS (valor dobrado a cada nivel). */
+  galeLevel: number;
+  /** signalId da entrada ORIGINAL (nivel 0) — em reentradas de Gale, liga de volta pra ela. */
+  rootSignalId: string;
 }
 
 export interface Settings {
   entryAmount: number; // padrao 5, minimo 5
   galeEnabled: boolean; // padrao false
-  galeMaxLevels: 0 | 1; // no maximo 1 quando ativado
+  galeMaxLevels: 0 | 1 | 2; // no maximo 2 quando ativado
   stopWinDaily: number | null;
   stopLossDaily: number | null;
   maxOperationsPerDay: number | null;
@@ -147,7 +151,10 @@ export const DEFAULT_SETTINGS: Settings = {
   stopLossDaily: null,
   maxOperationsPerDay: null,
   selectedActiveIds: [],
-  mode: 'OBSERVATION',
+  // DEMO por padrao de proposito: se algo der errado (clique sem querer, etc.), o pior caso e
+  // ganhar/perder na conta de pratica, nunca com dinheiro de verdade. So vira REAL se o
+  // usuario mudar isso explicitamente (e confirmar) na tela — nunca por omissao.
+  mode: 'DEMO',
   robotActive: false,
   analysisDays: 7,
 };

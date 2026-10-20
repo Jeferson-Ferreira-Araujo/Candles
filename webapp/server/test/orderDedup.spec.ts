@@ -26,6 +26,8 @@ function mkOrder(signalId: string, id: string): OrderRecord {
     status: 'REQUESTED',
     requestedAt: Date.now(),
     mode: 'DEMO',
+    galeLevel: 0,
+    rootSignalId: signalId,
   };
 }
 

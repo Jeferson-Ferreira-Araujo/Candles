@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import type { Db } from '../db/db.js';
 import type { AppEvent, Candle, Direction, Settings } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
-import { evaluateSafety, type SafetyContext } from './SafetyGate.js';
+import { evaluateSafety, type SafetyBlockReason, type SafetyContext } from './SafetyGate.js';
 import {
   getDailyResult,
   getOrderBySignalId,
@@ -25,14 +25,22 @@ export interface OrderServiceOptions {
   maxPollAttempts?: number;
 }
 
+export interface PlaceOrderOutcome {
+  allowed: boolean;
+  blockedBy: SafetyBlockReason[];
+  signalId: string;
+}
+
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 /**
- * Liga PATTERN_CONFIRMED (emitido pelo LiveMonitorService) ao BrokerAdapter, passando
- * SEMPRE pelo SafetyGate antes de qualquer chamada de rede. So opera em modo DEMO —
- * OBSERVATION nunca chama isto adiante, REAL e bloqueado pelo proprio SafetyGate.
+ * Liga confirmacoes de sinal (automaticas, via PATTERN_CONFIRMED do LiveMonitorService, OU
+ * manuais, via placeManualOrder) ao BrokerAdapter, passando SEMPRE pelo SafetyGate antes de
+ * qualquer chamada de rede. DEMO e REAL operam pelas MESMAS regras — a diferenca de dinheiro
+ * de verdade fica inteiramente por conta de qual sessao/credencial o BrokerAdapter usa.
+ * OBSERVATION nunca chega a enviar nada (bloqueado pelo proprio SafetyGate).
  *
  * Ordem de operacoes ao confirmar um sinal (nessa sequencia, nunca invertida):
  *   1. Persistir o sinal (idempotente — se ja existe, para aqui).
@@ -42,6 +50,12 @@ function todayIso(): string {
  *   4. Persistir a ORDEM (status REQUESTED) com protecao UNIQUE(signal_id) ANTES de
  *      chamar broker.placeOrder — assim, se a conexao cair exatamente durante a chamada,
  *      ja existe um registro para reconciliar/marcar como UNKNOWN, nunca reenviar.
+ *
+ * Gale (reentrada apos LOSS): quando settings.galeEnabled e o nivel atual ainda nao atingiu
+ * settings.galeMaxLevels, uma LOSS dispara automaticamente a proxima entrada, MESMA direcao,
+ * valor DOBRADO — ver pollForResolution. Cada nivel e uma ordem de verdade, independente,
+ * passando pelo MESMO SafetyGate (ex.: se o Stop Loss diario ja foi atingido pela perda que
+ * disparou o Gale, a reentrada tambem e bloqueada, nunca "pula" a regra).
  */
 export class OrderService extends EventEmitter {
   private readonly pollIntervalMs: number;
@@ -64,7 +78,6 @@ export class OrderService extends EventEmitter {
     if (!lastPatternCandle) return;
 
     const signalId = `12CANDLES-${activeId}-${lastPatternCandle.to}-${direction}`;
-
     if (await getSignal(this.db, signalId)) return; // ja processado — idempotente por design
 
     await saveSignal(this.db, {
@@ -78,44 +91,83 @@ export class OrderService extends EventEmitter {
     });
 
     const settings = await this.getSettings();
-    const context = await this.buildSafetyContext(activeId, signalId, settings);
+    await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings);
+  }
+
+  /**
+   * Entrada MANUAL — clique do usuario nos botoes Comprar/Vender da tela do grafico. Mesmo
+   * caminho de seguranca de `handleConfirmed`, so que sem um padrao de 12 velas por tras (o
+   * sinal criado aqui nao tem pattern_json real, so serve pra satisfazer a FK de orders).
+   * Devolve o resultado (permitido ou os motivos do bloqueio) pra UI poder explicar ao
+   * usuario por que a ordem nao saiu, em vez de so falhar silenciosamente.
+   */
+  async placeManualOrder(activeId: number, direction: Direction): Promise<PlaceOrderOutcome> {
+    const signalId = `MANUAL-${activeId}-${direction}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    await saveSignal(this.db, {
+      id: signalId,
+      activeId,
+      direction,
+      createdAt: Date.now(),
+      candles: [],
+      wickPercentage11: 0,
+      status: 'CREATED',
+    });
+
+    const settings = await this.getSettings();
+    const blockedBy = await this.executeOrder(signalId, signalId, activeId, direction, settings.entryAmount, 0, settings);
+    return { allowed: blockedBy.length === 0, blockedBy, signalId };
+  }
+
+  /**
+   * Nucleo compartilhado: roda o SafetyGate e, se permitido, persiste + envia a ordem pra
+   * corretora. Retorna a lista de motivos de bloqueio (vazia = foi enviada). `rootSignalId`
+   * e o signalId da entrada ORIGINAL (nivel 0) — em reentradas de Gale, liga de volta pra ela
+   * mesmo que o signalId desta chamada especifica seja outro (um por nivel, exigido pela FK).
+   */
+  private async executeOrder(
+    signalId: string,
+    rootSignalId: string,
+    activeId: number,
+    direction: Direction,
+    amount: number,
+    galeLevel: number,
+    settings: Settings
+  ): Promise<SafetyBlockReason[]> {
+    const context = await this.buildSafetyContext(activeId, signalId, amount, settings);
     const safety = evaluateSafety(context);
 
     if (!safety.allowed) {
       await updateSignalStatus(this.db, signalId, 'BLOCKED');
-      this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, blockedBy: safety.blockedBy });
-      return;
+      this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, galeLevel, blockedBy: safety.blockedBy });
+      return safety.blockedBy;
     }
 
     const orderId = randomUUID();
     const { inserted } = await insertOrderIfAbsent(this.db, {
       id: orderId,
       signalId,
+      rootSignalId,
+      galeLevel,
       activeId,
       direction,
-      amount: settings.entryAmount,
+      amount,
       status: 'REQUESTED',
       requestedAt: Date.now(),
       mode: settings.mode,
     });
-    if (!inserted) return; // outra chamada concorrente ja criou a ordem para este sinal
+    if (!inserted) return []; // outra chamada concorrente ja criou a ordem para este sinal
 
     await updateSignalStatus(this.db, signalId, 'ORDER_REQUESTED');
-    this.emitEvent('ORDER_REQUESTED', activeId, { signalId, orderId, amount: settings.entryAmount });
+    this.emitEvent('ORDER_REQUESTED', activeId, { signalId, orderId, amount, galeLevel });
 
     try {
-      const ack = await this.broker.placeOrder({
-        activeId,
-        direction,
-        amount: settings.entryAmount,
-        expirySeconds: EXPIRY_SECONDS,
-      });
+      const ack = await this.broker.placeOrder({ activeId, direction, amount, expirySeconds: EXPIRY_SECONDS });
       await updateOrder(this.db, orderId, { brokerOrderId: ack.brokerOrderId, status: 'CONFIRMED', confirmedAt: Date.now() });
       await updateSignalStatus(this.db, signalId, 'ORDER_CONFIRMED');
-      this.emitEvent('ORDER_CONFIRMED', activeId, { signalId, orderId, brokerOrderId: ack.brokerOrderId });
+      this.emitEvent('ORDER_CONFIRMED', activeId, { signalId, orderId, brokerOrderId: ack.brokerOrderId, galeLevel });
 
-      this.pollForResolution(orderId, ack.brokerOrderId, activeId, signalId, settings).catch((err) =>
-        this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, orderId, pollError: String(err) })
+      this.pollForResolution(orderId, ack.brokerOrderId, activeId, signalId, rootSignalId, direction, amount, galeLevel, settings).catch(
+        (err) => this.emitEvent('BLOCKED_BY_SAFETY_CHECK', activeId, { signalId, orderId, pollError: String(err) })
       );
     } catch (err) {
       // Perdeu a conexao (ou a corretora rejeitou) DEPOIS de persistir a ordem, ANTES de
@@ -124,9 +176,10 @@ export class OrderService extends EventEmitter {
       await updateSignalStatus(this.db, signalId, 'ORDER_UNKNOWN');
       this.emitEvent('ORDER_UNKNOWN', activeId, { signalId, orderId, error: err instanceof Error ? err.message : String(err) });
     }
+    return [];
   }
 
-  private async buildSafetyContext(activeId: number, signalId: string, settings: Settings): Promise<SafetyContext> {
+  private async buildSafetyContext(activeId: number, signalId: string, entryAmount: number, settings: Settings): Promise<SafetyContext> {
     let connectionHealthy = false;
     let sessionValid = false;
     let serverTimeDriftMs: number | null = null;
@@ -150,7 +203,7 @@ export class OrderService extends EventEmitter {
 
     let payoutPercentage: number | null = null;
     try {
-      payoutPercentage = await this.broker.getPayout(activeId, settings.entryAmount);
+      payoutPercentage = await this.broker.getPayout(activeId, entryAmount);
     } catch {
       payoutPercentage = null;
     }
@@ -164,7 +217,7 @@ export class OrderService extends EventEmitter {
       maxServerTimeDriftMs: MAX_SERVER_TIME_DRIFT_MS,
       balance,
       payoutPercentage,
-      entryAmount: settings.entryAmount,
+      entryAmount,
       stopWinDaily: settings.stopWinDaily,
       stopLossDaily: settings.stopLossDaily,
       maxOperationsPerDay: settings.maxOperationsPerDay,
@@ -179,6 +232,10 @@ export class OrderService extends EventEmitter {
     brokerOrderId: string,
     activeId: number,
     signalId: string,
+    rootSignalId: string,
+    direction: Direction,
+    amount: number,
+    galeLevel: number,
     settings: Settings
   ): Promise<void> {
     for (let attempt = 0; attempt < this.maxPollAttempts; attempt++) {
@@ -201,9 +258,25 @@ export class OrderService extends EventEmitter {
         payoutPercentage: resolution.payoutPercentage,
       });
       await updateSignalStatus(this.db, signalId, resolution.result);
-      this.emitEvent(resolution.result, activeId, { signalId, orderId, pnl: resolution.pnl });
+      this.emitEvent(resolution.result, activeId, { signalId, orderId, pnl: resolution.pnl, galeLevel });
 
       await this.applyToDailyResult(activeId, resolution.result, resolution.pnl, settings);
+
+      if (resolution.result === 'LOSS' && settings.galeEnabled && galeLevel < settings.galeMaxLevels) {
+        const nextLevel = galeLevel + 1;
+        const nextSignalId = `${rootSignalId}-GALE${nextLevel}`;
+        const nextAmount = amount * 2; // martingale classico: dobra sobre a entrada QUE ACABOU de perder
+        await saveSignal(this.db, {
+          id: nextSignalId,
+          activeId,
+          direction,
+          createdAt: Date.now(),
+          candles: [],
+          wickPercentage11: 0,
+          status: 'CREATED',
+        });
+        await this.executeOrder(nextSignalId, rootSignalId, activeId, direction, nextAmount, nextLevel, settings);
+      }
       return;
     }
     // Esgotou as tentativas sem resolucao: a ordem fica CONFIRMED (nao UNKNOWN — sabemos
