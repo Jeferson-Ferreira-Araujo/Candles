@@ -232,13 +232,41 @@ export class PolariumAdapter implements BrokerAdapter {
       return null;
     }
 
-    // profitPercent() e um metodo real e confirmado da SDK — nao um valor inventado.
-    const percent = instrument.profitPercent(amount);
-    if (!Number.isFinite(percent)) {
-      console.error(`[getPayout] profitPercent(${amount}) retornou valor nao finito para activeId ${activeId}: ${percent}`);
+    // profitPercent() precisa dos precos ask/bid das strikes, que so chegam depois de assinar
+    // o canal correspondente — sem isso, profitPercent() lanca "ask/bid prices are undefined".
+    await instrument.subscribeOnStrikesAskBidPrices();
+    const percent = await this.waitForProfitPercent(instrument, amount);
+    if (percent === null) {
+      console.error(
+        `[getPayout] timeout esperando preco ask/bid (via subscribeOnStrikesAskBidPrices) para activeId ${activeId}.`
+      );
       return null;
     }
     return percent;
+  }
+
+  /**
+   * profitPercent() lanca erro at'e o primeiro evento de preco ask/bid chegar pelo websocket
+   * (assinado por subscribeOnStrikesAskBidPrices). Tenta novamente por um curto periodo em vez
+   * de desistir na primeira tentativa.
+   */
+  private async waitForProfitPercent(
+    instrument: { profitPercent(amount: number): number },
+    amount: number,
+    timeoutMs = 3000,
+    intervalMs = 150
+  ): Promise<number | null> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const percent = instrument.profitPercent(amount);
+        if (Number.isFinite(percent)) return percent;
+      } catch {
+        // ask/bid ainda nao chegaram — tenta de novo ate o timeout.
+      }
+      if (Date.now() >= deadline) return null;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
   }
 
   async placeOrder(params: PlaceOrderParams): Promise<PlaceOrderAck> {
@@ -254,6 +282,11 @@ export class PolariumAdapter implements BrokerAdapter {
     if (!instrument) {
       throw new Error(`Nenhum instrumento digital de ${params.expirySeconds}s disponivel para o ativo ${params.activeId} agora. Nao operar.`);
     }
+
+    // Mesma exigencia da SDK que em getPayout: precos ask/bid precisam estar assinados antes
+    // de comprar, senao buySpotStrike pode falhar pelo mesmo motivo (precos indefinidos).
+    await instrument.subscribeOnStrikesAskBidPrices();
+    await this.waitForProfitPercent(instrument, params.amount);
 
     const balance = await this.getTradingBalance(params.mode);
     const order = await digital.buySpotStrike(instrument, toSdkDirection(params.direction), params.amount, balance);

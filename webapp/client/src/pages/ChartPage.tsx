@@ -244,7 +244,20 @@ export function ChartPage() {
     if (!last || last.type !== 'CANDLE_CLOSED' || last.activeId !== watchingAssetIdRef.current) return;
     const candle = (last.payload as { candle?: Candle }).candle;
     if (candle) setLiveCandle(candle);
-    checkPendingSignal();
+
+    // A vela que acabou de fechar pode ter sido a entrada de uma ocorrencia da estrategia —
+    // sem recalcular aqui, o placar W/L e os marcadores do grafico ficam "congelados" no
+    // snapshot de quando a tela abriu, mesmo com novos WIN/LOSS acontecendo ao vivo.
+    const assetId = watchingAssetIdRef.current;
+    if (assetId === null) return;
+    resolveStrategy(assetId, daysRef.current, strategyModeRef.current)
+      .then((result) => {
+        setBest(result);
+        checkPendingSignal(result, assetId);
+      })
+      .catch(() => {
+        // falha ao recalcular nao deve derrubar a tela — mantem o placar anterior
+      });
   }, [events, checkPendingSignal]);
 
   // Tick da vela AINDA EM FORMACAO (CANDLE_UPDATED) — e o que faz o grafico "se mexer" em
