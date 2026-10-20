@@ -598,18 +598,12 @@ async function ensureLiveServicesStarted(): Promise<void> {
     });
   });
 
-  // Vigia TODOS os ativos disponiveis (nao so o top 3 de uma varredura) — cobertura maxima de
-  // aviso, decisao explicita do usuario depois de perceber que o top 3 raramente pega algo
-  // formando no momento exato. Nao depende do cliente ter rodado uma varredura: comeca sozinho
-  // assim que o broker loga.
-  try {
-    const allAssets = await broker.listAssets();
-    await watchlistWatcher.setAssets(allAssets.map((a) => ({ activeId: a.id, assetName: a.name })));
-    console.log(`[watchlist] vigiando ${allAssets.length} ativos x ${CLASSIC_STRATEGIES.length} estrategias.`);
-  } catch (err) {
-    console.error('[watchlist] falha ao iniciar vigilancia de todos os ativos:', err instanceof Error ? err.message : err);
-  }
-
+  // A vigilancia de TODOS os ativos x TODAS as estrategias (WatchlistWatcher.setAssets) fica
+  // DESLIGADA por enquanto — ligar automaticamente no login criou 101 assinaturas de velas ao
+  // vivo de uma vez, e trocar de sessao (reconectar/logar de novo) com todas elas abertas
+  // derrubou a conexao com a corretora (a troca de WebSocket no meio das 101 chamadas de
+  // unsubscribe gerava uma enxurrada de "WebSocket is closing"). O login volta a nao disparar
+  // nenhuma analise sozinho — so cria o watcher vazio, pronto pra ser ligado depois com cuidado.
   if (settings.selectedActiveIds.length === 0) {
     console.log('[live] Nenhum ativo selecionado nas configuracoes — monitor ao vivo nao iniciado.');
     return;
