@@ -34,6 +34,7 @@ import {
   detectPendingSignal,
   fetchClosedCandles,
   computeClassicStrategyResult,
+  getCurrentSupportResistanceLevels,
 } from './strategies/classicStrategies.js';
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
@@ -292,6 +293,24 @@ app.post('/api/classic-strategy/pending', async (req, res) => {
     const strategy = defaultClassicStrategyConfig(strategyId);
     const pending = detectPendingSignal(candles, strategy);
     res.json({ pending });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Niveis de Suporte/Resistencia validados pro ativo atual — so pra DESENHAR no grafico (linha
+// tracejada, ver CandleChart), nao pra decidir sinal (isso fica dentro do detector mesmo,
+// que tem cuidado extra pra nunca usar um nivel que so ficou conhecido DEPOIS da vela avaliada).
+app.post('/api/support-resistance-levels', async (req, res) => {
+  const { activeId, days } = req.body as { activeId?: number; days?: number };
+  if (!Number.isFinite(activeId) || !Number.isFinite(days) || (days ?? 0) <= 0) {
+    res.status(400).json({ error: 'Informe activeId e days (numero positivo).' });
+    return;
+  }
+  try {
+    const candles = await fetchClosedCandles(brokerManager.get(), activeId!, days!);
+    const levels = getCurrentSupportResistanceLevels(candles);
+    res.json(levels);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

@@ -9,14 +9,14 @@ import { runClassicStrategyScan } from '../lib/classicStrategyScan.js';
 const DEFAULT_DAYS = 7;
 
 /**
- * Tela "Estratégias Clássicas": deixa escolher uma de 5 familias classicas de setup (reversao
- * apos sequencia, engolfo, pin bar, impulso+pullback, compressao+breakout) e rodar contra um
- * ou varios ativos (ou todos) para ver quantas vezes aconteceu e o resultado real. Cada
- * estrategia usa sua propria definicao padrao, fixa (nao ha parametros pra ajustar aqui) —
- * o objetivo e testar a regra classica tal como ela e, nao uma variacao customizada.
+ * Tela "Estratégias Clássicas": roda a estrategia de Suporte e Resistencia (zigzag + CCI +
+ * Bandas de Bollinger — ver shared/src/classicStrategies.ts e server/src/strategies) contra um
+ * ou varios ativos (ou todos) para ver quantas vezes aconteceu e o resultado real. A estrategia
+ * usa sua propria definicao padrao, fixa (nao ha parametros pra ajustar aqui) — o objetivo e
+ * testar a regra tal como ela e, nao uma variacao customizada.
  */
 export function ClassicStrategiesPage() {
-  const [strategyId, setStrategyId] = useState<ClassicStrategyId>('sequence_reversal');
+  const [strategyId, setStrategyId] = useState<ClassicStrategyId>('support_resistance');
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [testAllAssets, setTestAllAssets] = useState(true);
   const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);

@@ -25,6 +25,12 @@ export interface ActiveOrderLine {
   result: 'WIN' | 'LOSS' | 'DOJI' | null;
 }
 
+export interface SRLevelLine {
+  price: number;
+  type: 'support' | 'resistance';
+  touches: number;
+}
+
 export interface ChartMarker {
   time: number; // epoch seconds (candle.from do candle marcado)
   position: 'aboveBar' | 'belowBar';
@@ -42,6 +48,9 @@ interface Props {
   /** Entradas em aberto/recem-resolvidas — uma linha tracejada por entrada, no respectivo preco.
    * Suporta 2+ simultaneas (cliques repetidos em Comprar/Vender), nao so uma por vez. */
   activeOrders?: ActiveOrderLine[];
+  /** Niveis de Suporte/Resistencia validados (2+ toques) pro ativo atual — linhas horizontais
+   * continuas, so pra referencia visual (nao reagem a clique nem mudam de cor). */
+  srLevels?: SRLevelLine[];
   /** Altura fixa em px — ignorado quando `fill` esta ligado. */
   height?: number;
   /** Em vez de uma altura fixa, ocupa 100% do container pai (que precisa ter altura propria,
@@ -71,7 +80,7 @@ function toCandlestickData(c: Candle): CandlestickData<Time> {
  * grafico — agora a visao SO muda quando o usuario mexe nela ou aperta "Ir para agora".
  */
 export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleChart(
-  { candles, liveCandle, markers, activeOrders, height = 360, fill = false },
+  { candles, liveCandle, markers, activeOrders, srLevels, height = 360, fill = false },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -79,6 +88,7 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const activeOrderLinesRef = useRef<Map<string, IPriceLine>>(new Map());
+  const srLevelLinesRef = useRef<IPriceLine[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -127,6 +137,7 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
       seriesRef.current = null;
       markersPluginRef.current = null;
       activeOrderLinesRef.current.clear();
+      srLevelLinesRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -197,6 +208,25 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
       }
     }
   }, [activeOrders]);
+
+  // Niveis de Suporte/Resistencia validados — linhas continuas (nao tracejadas, pra nao
+  // confundir com as linhas de entrada), cor fixa por tipo, so redesenhadas quando a lista
+  // muda (troca de ativo ou nova varredura), nunca a cada tick.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    for (const line of srLevelLinesRef.current) series.removePriceLine(line);
+    srLevelLinesRef.current = (srLevels ?? []).map((level) =>
+      series.createPriceLine({
+        price: level.price,
+        color: level.type === 'support' ? '#38bdf8' : '#f472b6',
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `${level.type === 'support' ? 'Suporte' : 'Resistência'} (${level.touches}x)`,
+      })
+    );
+  }, [srLevels]);
 
   useImperativeHandle(ref, () => ({
     goToRealTime: () => chartRef.current?.timeScale().scrollToRealTime(),

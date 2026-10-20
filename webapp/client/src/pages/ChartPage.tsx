@@ -3,7 +3,13 @@ import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
 import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
 import { api, type AssetScanRanking, type WatchlistEntry } from '../api.js';
-import { CandleChart, type ActiveOrderLine, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
+import {
+  CandleChart,
+  type ActiveOrderLine,
+  type CandleChartHandle,
+  type ChartMarker,
+  type SRLevelLine,
+} from '../components/CandleChart.js';
 import {
   findBestStrategy,
   runActivePatternStrategy,
@@ -74,6 +80,7 @@ export function ChartPage() {
   const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
   const [hasActivePattern, setHasActivePattern] = useState(false);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [srLevels, setSrLevels] = useState<SRLevelLine[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [watchingAssetId, setWatchingAssetId] = useState<number | null>(null);
@@ -141,6 +148,7 @@ export function ChartPage() {
     setLiveCandle(null);
     setPendingSignal(null);
     setActiveOrders([]);
+    setSrLevels([]);
     try {
       const [data] = await Promise.all([api.getCandles(assetId, d), api.watchChartAsset(assetId)]);
       setCandles(data);
@@ -152,6 +160,18 @@ export function ChartPage() {
     } finally {
       setLoadingChart(false);
     }
+
+    // Niveis de Suporte/Resistencia pra desenhar no grafico — so visual (nao decide sinal),
+    // entao uma falha aqui nao deve atrapalhar o resto da tela.
+    api
+      .getSupportResistanceLevels(assetId, d)
+      .then((levels) => {
+        setSrLevels([
+          ...levels.support.map((l) => ({ ...l, type: 'support' as const })),
+          ...levels.resistance.map((l) => ({ ...l, type: 'resistance' as const })),
+        ]);
+      })
+      .catch(() => {});
 
     try {
       const result = await resolveStrategy(assetId, d, mode);
@@ -914,6 +934,7 @@ export function ChartPage() {
               liveCandle={liveCandle}
               markers={markers}
               activeOrders={activeOrderLines}
+              srLevels={srLevels}
               fill
             />
           ) : (

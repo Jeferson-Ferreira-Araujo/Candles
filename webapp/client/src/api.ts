@@ -184,6 +184,13 @@ export const api = {
       }>(r)
     ),
 
+  getSupportResistanceLevels: (activeId: number, days: number) =>
+    req('/api/support-resistance-levels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeId, days }),
+    }).then((r) => json<{ support: { price: number; touches: number }[]; resistance: { price: number; touches: number }[] }>(r)),
+
   getPendingSignal: (activeId: number, days: number, strategyId: ClassicStrategyId) =>
     req('/api/classic-strategy/pending', {
       method: 'POST',
