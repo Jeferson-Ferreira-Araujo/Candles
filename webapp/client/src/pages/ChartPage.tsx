@@ -89,6 +89,10 @@ export function ChartPage() {
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null);
+  // Controla so a faixa de status (preco/contagem/lucro-prejuizo) acima do grafico — some
+  // sozinha um tempo depois do resultado chegar, sem apagar a linha tracejada nem o marcador
+  // WIN/LOSS no candle (esses continuam ate a proxima entrada, sao o "registro" da operacao).
+  const [orderBannerVisible, setOrderBannerVisible] = useState(false);
   const [resultToast, setResultToast] = useState<{ status: 'WIN' | 'LOSS' | 'DOJI'; pnl?: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
   // Chave composta `activeId:strategyId` — agora vigiamos TODOS os ativos x TODAS as
@@ -326,6 +330,15 @@ export function ChartPage() {
     setResultToast({ status, pnl: payload.pnl });
   }, [events, activeOrder]);
 
+  // Esconde a FAIXA de status (preco/contagem/lucro-prejuizo) um tempo depois do resultado
+  // chegar — a linha tracejada no grafico e o marcador WIN/LOSS continuam (ficam como registro
+  // ate a proxima entrada), so essa faixa em cima some sozinha pra nao ficar poluindo a tela.
+  useEffect(() => {
+    if (!activeOrder || activeOrder.status === 'OPEN') return;
+    const id = setTimeout(() => setOrderBannerVisible(false), 8000);
+    return () => clearTimeout(id);
+  }, [activeOrder]);
+
   // Fecha o aviso de resultado sozinho depois de um tempo — nao fica preso na tela.
   useEffect(() => {
     if (!resultToast) return;
@@ -424,6 +437,7 @@ export function ChartPage() {
             payoutPercentage: outcome.payoutPercentage,
             status: 'OPEN',
           });
+          setOrderBannerVisible(true);
         }
       } else {
         setOrderStatus('blocked');
@@ -798,7 +812,7 @@ export function ChartPage() {
           grafico), tempo restante at'e a vela de expiracao fechar, se esta no lucro/prejuizo
           AGORA (comparando preco atual x preco de entrada) e quanto rende/perde no payout
           vigente — ate o resultado real (WIN/LOSS/DOJI) chegar da corretora. */}
-      {activeOrder && (
+      {activeOrder && orderBannerVisible && (
         <div
           className={`px-3 sm:px-6 py-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-b ${
             activeOrder.status === 'WIN'
