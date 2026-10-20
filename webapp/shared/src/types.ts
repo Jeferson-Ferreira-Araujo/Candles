@@ -190,7 +190,10 @@ export type EventType =
   | 'CONNECTION_LOST'
   | 'CONNECTION_RESTORED'
   | 'KILL_SWITCH'
-  | 'BLOCKED_BY_SAFETY_CHECK';
+  | 'BLOCKED_BY_SAFETY_CHECK'
+  /** Checagem periodica de um ativo da watchlist (top ativos da ultima varredura) — ver
+   * WatchlistWatcher. direction=null no payload significa "sem sinal agora" (apaga aviso velho). */
+  | 'WATCHLIST_SIGNAL';
 
 export interface AppEvent {
   id: string;

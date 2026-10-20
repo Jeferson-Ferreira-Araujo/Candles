@@ -47,7 +47,11 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
     setDailyResult(d);
     try {
       const balances = await api.getBalances();
-      setBalance(balances[0]?.amount ?? null);
+      // Tem que ser o saldo do modo ATIVO (demo/real) — nunca so "o primeiro da lista", senao
+      // o usuario pode achar que esta vendo o saldo real quando na verdade e o demo (ou vice-
+      // versa). Cai pro primeiro so se por algum motivo a corretora nao devolver esse tipo.
+      const wanted = s.mode === 'REAL' ? 'real' : 'demo';
+      setBalance(balances.find((b) => b.type === wanted)?.amount ?? balances[0]?.amount ?? null);
     } catch {
       setBalance(null);
     }
@@ -93,8 +97,10 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
         onLogout={logout}
       />
       <div className="flex flex-1 min-w-0">
-        {/* Sidebar completa: so em telas >= sm. Em telas menores, vira barra inferior. */}
-        <nav className="hidden sm:block w-56 shrink-0 border-r border-slate-800 bg-slate-950 p-3 space-y-1">
+        {/* Sidebar completa: so em telas "de desktop" de verdade (largas E altas — ver
+            tailwind.config.js). Celular deitado e largo mas baixo, cai na barra inferior
+            igual celular em pe, senao essa sidebar cheia nao cabe (fica gigante/cortada). */}
+        <nav className="hidden desk:block w-56 shrink-0 border-r border-slate-800 bg-slate-950 p-3 space-y-1">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
@@ -124,7 +130,7 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
             corretora — as outras paginas mantem o padding padrao de sempre. */}
         <main
           className={`flex-1 min-w-0 bg-slate-950 overflow-x-hidden ${
-            location.pathname === '/' ? 'pb-16 sm:pb-0' : 'p-4 sm:p-6 pb-20 sm:pb-6'
+            location.pathname === '/' ? 'pb-16 desk:pb-0' : 'p-4 sm:p-6 pb-20 desk:pb-6'
           }`}
         >
           <Outlet context={{ events, settings, refreshHeader: refresh }} />
@@ -134,7 +140,7 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
       {/* Barra inferior no celular: com 9 secoes, cada uma virando icone+rotulo espremidos numa
           linha so ficava ilegivel (rotulos grudados uns nos outros) — em vez disso, um botao so
           que mostra a pagina atual e abre a lista completa como um menu deslizante de baixo. */}
-      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950 border-t border-slate-800">
+      <nav className="desk:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950 border-t border-slate-800">
         <button
           type="button"
           onClick={() => setMobileMenuOpen(true)}
@@ -147,7 +153,7 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
       </nav>
 
       {mobileMenuOpen && (
-        <div className="sm:hidden fixed inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+        <div className="desk:hidden fixed inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
           <button
             type="button"
             aria-label="Fechar menu"

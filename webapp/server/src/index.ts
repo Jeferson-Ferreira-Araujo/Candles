@@ -32,6 +32,7 @@ import { runClassicStrategy, runAllClassicStrategiesForAsset, detectPendingSigna
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
+import { WatchlistWatcher, type WatchlistEntry } from './live/WatchlistWatcher.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
 import { loginWithCredentials } from './auth/polariumHeadlessLogin.js';
 
@@ -49,6 +50,7 @@ const brokerManager = new BrokerManager();
 
 let liveMonitor: LiveMonitorService | null = null;
 let orderService: OrderService | null = null;
+let watchlistWatcher: WatchlistWatcher | null = null;
 
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? true, credentials: true }));
@@ -157,6 +159,8 @@ app.post('/api/auth/logout', async (req, res) => {
   if (brokerManager.requiresLogin) {
     liveMonitor?.stop();
     liveMonitor = null;
+    await watchlistWatcher?.stop();
+    watchlistWatcher = null;
     await stopChartStream();
     await brokerManager.logout();
   }
@@ -547,6 +551,33 @@ app.delete('/api/chart-stream', async (_req, res) => {
   res.json({ ok: true });
 });
 
+// Watchlist: fica de olho em segundo plano nos top ativos de uma varredura (ver
+// WatchlistWatcher) e avisa via WebSocket (evento WATCHLIST_SIGNAL) quando o setup da
+// estrategia atribuida a cada um se completa — mesmo que o usuario esteja olhando outro
+// ativo no grafico no momento.
+app.post('/api/watchlist', async (req, res) => {
+  const { entries } = req.body as { entries?: WatchlistEntry[] };
+  if (!watchlistWatcher) {
+    res.status(400).json({ error: 'Watchlist não está pronta (faça login primeiro).' });
+    return;
+  }
+  if (!Array.isArray(entries)) {
+    res.status(400).json({ error: 'Informe entries (lista de {activeId, assetName, strategyId, strategyName}).' });
+    return;
+  }
+  try {
+    await watchlistWatcher.setEntries(entries);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/watchlist', async (_req, res) => {
+  await watchlistWatcher?.stop();
+  res.json({ ok: true });
+});
+
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
@@ -573,6 +604,8 @@ function broadcast(event: AppEvent): void {
 async function ensureLiveServicesStarted(): Promise<void> {
   liveMonitor?.stop();
   liveMonitor = null;
+  await watchlistWatcher?.stop();
+  watchlistWatcher = null;
 
   if (!brokerManager.isReady()) return;
   const broker = brokerManager.get();
@@ -581,6 +614,16 @@ async function ensureLiveServicesStarted(): Promise<void> {
 
   orderService = new OrderService(db, broker, () => loadSettings(db));
   orderService.on('event', broadcast);
+
+  watchlistWatcher = new WatchlistWatcher(broker, (payload) => {
+    broadcastRaw('APP_EVENT', {
+      id: randomUUID(),
+      type: 'WATCHLIST_SIGNAL',
+      activeId: payload.activeId,
+      payload,
+      createdAt: Date.now(),
+    });
+  });
 
   if (settings.selectedActiveIds.length === 0) {
     console.log('[live] Nenhum ativo selecionado nas configuracoes — monitor ao vivo nao iniciado.');

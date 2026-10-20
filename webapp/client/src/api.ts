@@ -24,6 +24,13 @@ export interface AuthStatus {
   authenticated: boolean;
 }
 
+export interface WatchlistEntry {
+  activeId: number;
+  assetName: string;
+  strategyId: ClassicStrategyId;
+  strategyName: string;
+}
+
 export interface AssetScanRanking {
   activeId: number;
   assetName: string;
@@ -179,6 +186,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activeId, direction }),
     }).then((r) => json<{ allowed: boolean; blockedBy: string[]; signalId: string }>(r)),
+
+  setWatchlist: (entries: WatchlistEntry[]) =>
+    req('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    }).then((r) => json<{ ok: true }>(r)),
+
+  clearWatchlist: () => req('/api/watchlist', { method: 'DELETE' }).then((r) => json<{ ok: true }>(r)),
 
   getAssets: () => req('/api/assets').then((r) => json<AssetInfo[]>(r)),
 

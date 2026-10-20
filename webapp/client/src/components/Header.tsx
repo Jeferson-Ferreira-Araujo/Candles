@@ -60,7 +60,9 @@ export function Header({
       </div>
 
       <div>
-        <div className="text-xs text-slate-500">Saldo</div>
+        <div className={`text-xs font-medium ${mode === 'REAL' ? 'text-rose-400' : 'text-slate-500'}`}>
+          Saldo {mode !== 'OBSERVATION' ? `(${mode})` : ''}
+        </div>
         <div className="font-semibold whitespace-nowrap">
           {balance === null ? '—' : balance.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' })}
         </div>

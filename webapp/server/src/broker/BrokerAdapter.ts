@@ -1,4 +1,4 @@
-import type { AssetInfo, Candle, Direction, TradeResult } from '@polarium12c/shared';
+import type { AppMode, AssetInfo, Candle, Direction, TradeResult } from '@polarium12c/shared';
 
 /**
  * Contrato unico entre a aplicacao e qualquer corretora. Tudo que a aplicacao sabe sobre
@@ -21,6 +21,9 @@ export interface PlaceOrderParams {
   amount: number;
   /** Duracao da expiracao em segundos (M1 = 60). */
   expirySeconds: number;
+  /** Qual saldo usar (DEMO ou REAL) — decidido pelo chamador a partir de Settings.mode, NUNCA
+   * fixo no adapter. 'OBSERVATION' nunca deveria chegar aqui (o SafetyGate bloqueia antes). */
+  mode: AppMode;
 }
 
 export interface PlaceOrderAck {

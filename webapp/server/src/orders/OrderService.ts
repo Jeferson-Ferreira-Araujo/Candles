@@ -161,7 +161,7 @@ export class OrderService extends EventEmitter {
     this.emitEvent('ORDER_REQUESTED', activeId, { signalId, orderId, amount, galeLevel });
 
     try {
-      const ack = await this.broker.placeOrder({ activeId, direction, amount, expirySeconds: EXPIRY_SECONDS });
+      const ack = await this.broker.placeOrder({ activeId, direction, amount, expirySeconds: EXPIRY_SECONDS, mode: settings.mode });
       await updateOrder(this.db, orderId, { brokerOrderId: ack.brokerOrderId, status: 'CONFIRMED', confirmedAt: Date.now() });
       await updateSignalStatus(this.db, signalId, 'ORDER_CONFIRMED');
       this.emitEvent('ORDER_CONFIRMED', activeId, { signalId, orderId, brokerOrderId: ack.brokerOrderId, galeLevel });

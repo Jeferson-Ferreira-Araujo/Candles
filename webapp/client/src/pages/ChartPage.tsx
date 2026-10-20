@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
+import { useOutletContext } from 'react-router-dom';
+import type { AppEvent, AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
 import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
-import { api, type AssetScanRanking } from '../api.js';
+import { api, type AssetScanRanking, type WatchlistEntry } from '../api.js';
 import { CandleChart, type CandleChartHandle, type ChartMarker } from '../components/CandleChart.js';
 import {
   findBestStrategy,
@@ -66,7 +67,9 @@ export function ChartPage() {
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [watchlistSignals, setWatchlistSignals] = useState<Record<number, WatchlistEntry & { direction: Direction }>>({});
   const { events, lastCandleUpdate } = useLiveSocket();
+  const { refreshHeader } = useOutletContext<{ events: AppEvent[]; settings: Settings | null; refreshHeader: () => Promise<void> }>();
   const watchingAssetIdRef = useRef<number | null>(null);
   watchingAssetIdRef.current = watchingAssetId;
   const bestRef = useRef<BestStrategyResult | null | 'loading'>(null);
@@ -162,6 +165,25 @@ export function ChartPage() {
         setStrategyMode(res.best.strategyId);
         loadChartFor(res.best.activeId, res.best.strategyId, SCAN_DAYS);
       }
+
+      // Top 3 ATIVOS distintos (cada um com a sua melhor estrategia) ficam sendo vigiados em
+      // segundo plano no servidor — avisa via WebSocket quando o setup de qualquer um deles
+      // se completar, mesmo que o usuario esteja olhando outro ativo no grafico agora.
+      const seenAssets = new Set<number>();
+      const topDistinctAssets: WatchlistEntry[] = [];
+      for (const row of res.top) {
+        if (seenAssets.has(row.activeId)) continue;
+        seenAssets.add(row.activeId);
+        topDistinctAssets.push({
+          activeId: row.activeId,
+          assetName: row.assetName,
+          strategyId: row.strategyId,
+          strategyName: row.strategyName,
+        });
+        if (topDistinctAssets.length === 3) break;
+      }
+      setWatchlistSignals({});
+      api.setWatchlist(topDistinctAssets).catch(() => {});
     } catch {
       setScanStatus('error');
     }
@@ -188,12 +210,30 @@ export function ChartPage() {
   }, [assets, runFullScan]);
 
   // Para a transmissao ao sair da tela (sem isso, o servidor continuaria assinado no ultimo
-  // ativo escolhido indefinidamente).
+  // ativo escolhido indefinidamente). A watchlist (top 3) tambem para junto.
   useEffect(() => {
     return () => {
       if (watchingAssetIdRef.current !== null) api.unwatchChartAsset().catch(() => {});
+      api.clearWatchlist().catch(() => {});
     };
   }, []);
+
+  // Avisos da watchlist (top 3 ativos da ultima varredura, vigiados em segundo plano no
+  // servidor) — chegam mesmo que o usuario esteja olhando outro ativo no grafico agora.
+  useEffect(() => {
+    const last = events[0];
+    if (!last || last.type !== 'WATCHLIST_SIGNAL' || last.activeId === undefined) return;
+    const payload = last.payload as unknown as WatchlistEntry & { direction: Direction | null };
+    setWatchlistSignals((prev) => {
+      const next = { ...prev };
+      if (payload.direction) {
+        next[last.activeId!] = { ...payload, direction: payload.direction };
+      } else {
+        delete next[last.activeId!];
+      }
+      return next;
+    });
+  }, [events]);
 
   // Vela recem-fechada do ativo sendo transmitido — vira a "ponta ao vivo" do grafico, sem
   // nunca reconstruir o array historico inteiro (ver CandleChart: so a ultima barra muda). Toda
@@ -242,6 +282,7 @@ export function ChartPage() {
     try {
       const next = await api.saveSettings(patch);
       setSettings(next);
+      refreshHeader(); // o cabecalho (saldo/modo) tem seu PROPRIO settings — sem isso ficaria desatualizado ate um F5
     } catch (err) {
       setSettings(prev); // desfaz se o servidor recusar
       setOrderMessage(err instanceof Error ? err.message : String(err));
@@ -451,6 +492,29 @@ export function ChartPage() {
           {scanStatus === 'scanning' ? '🔍 Analisando...' : '🔍 Analisar todos'}
         </button>
       </div>
+
+      {/* Avisos da watchlist: outros ativos (fora o que esta aberto agora) cujo setup acabou
+          de se completar — toca pra abrir aquele ativo+estrategia na hora. */}
+      {Object.keys(watchlistSignals).length > 0 && (
+        <div className="px-3 sm:px-6 py-1.5 flex items-center gap-2 flex-wrap border-b border-slate-800 bg-amber-950/20">
+          {Object.values(watchlistSignals).map((sig) => (
+            <button
+              key={sig.activeId}
+              type="button"
+              onClick={() => {
+                setStrategyMode(sig.strategyId);
+                loadChartFor(sig.activeId, sig.strategyId, SCAN_DAYS);
+              }}
+              className={`flex items-center gap-1.5 rounded-full pl-2 pr-3 py-1 text-xs font-semibold animate-pulse ${
+                sig.direction === 'CALL' ? 'bg-emerald-600/90 text-white' : 'bg-rose-600/90 text-white'
+              }`}
+            >
+              <span className="text-sm">🔔</span>
+              {sig.assetName} · {sig.strategyName} · {sig.direction === 'CALL' ? 'CALL' : 'PUT'}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Linha de status: varredura OU melhor estrategia (nunca as duas, pra poupar altura —
           importante no celular deitado, onde a tela e baixa). */}

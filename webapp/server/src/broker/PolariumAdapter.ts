@@ -5,7 +5,7 @@ import {
   BalanceType,
   type Candle as SdkCandle,
 } from '@quadcode-tech/client-sdk-js';
-import type { AssetInfo, AssetKind, Candle, Direction } from '@polarium12c/shared';
+import type { AppMode, AssetInfo, AssetKind, Candle, Direction } from '@polarium12c/shared';
 import {
   NotImplementedError,
   type BrokerAdapter,
@@ -30,8 +30,6 @@ export interface PolariumAdapterConfig {
   wsUrl: string;
   platformId: number;
   ssid: string;
-  /** Qual tipo de saldo usar para negociar (demo ou real). REAL deve ficar bloqueado na camada de aplicacao, nao aqui. */
-  balanceType: BalanceType;
   /** Duracao padrao da expiracao digital, em segundos. M1 = 60. */
   expirySeconds: number;
 }
@@ -146,14 +144,18 @@ export class PolariumAdapter implements BrokerAdapter {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  private async getTradingBalance() {
+  /** `mode` vem de Settings.mode a cada chamada — NUNCA fixo no adapter, pra DEMO/REAL
+   * trocarem de verdade a conta usada sem precisar reconectar nem reconstruir o adapter. */
+  private async getTradingBalance(mode: AppMode) {
+    if (mode === 'OBSERVATION') {
+      throw new Error('OBSERVATION nunca opera — nao ha saldo de negociacao para este modo (regra: na duvida, nao operar).');
+    }
+    const balanceType = mode === 'REAL' ? BalanceType.Real : BalanceType.Demo;
     const sdk = this.requireSdk();
     const balances = await sdk.balances();
-    const balance = balances.getBalances().find((b) => b.type === this.config.balanceType);
+    const balance = balances.getBalances().find((b) => b.type === balanceType);
     if (!balance) {
-      throw new Error(
-        `Nenhum saldo do tipo ${this.config.balanceType} encontrado na conta. Nao operar (regra: na duvida, nao operar).`
-      );
+      throw new Error(`Nenhum saldo do tipo ${balanceType} encontrado na conta. Nao operar (regra: na duvida, nao operar).`);
     }
     return balance;
   }
@@ -241,7 +243,7 @@ export class PolariumAdapter implements BrokerAdapter {
       throw new Error(`Nenhum instrumento digital de ${params.expirySeconds}s disponivel para o ativo ${params.activeId} agora. Nao operar.`);
     }
 
-    const balance = await this.getTradingBalance();
+    const balance = await this.getTradingBalance(params.mode);
     const order = await digital.buySpotStrike(instrument, toSdkDirection(params.direction), params.amount, balance);
     return { brokerOrderId: String(order.id) };
   }

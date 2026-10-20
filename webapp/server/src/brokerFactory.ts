@@ -1,6 +1,5 @@
 import { MockBrokerAdapter } from './broker/MockBrokerAdapter.js';
 import { PolariumAdapter } from './broker/PolariumAdapter.js';
-import { BalanceType } from '@quadcode-tech/client-sdk-js';
 import type { BrokerAdapter } from './broker/BrokerAdapter.js';
 
 const WS_URL = 'wss://ws.trade.polariumbroker.com/echo/websocket';
@@ -56,7 +55,6 @@ export class BrokerManager {
       wsUrl: WS_URL,
       platformId,
       ssid,
-      balanceType: BalanceType.Demo, // DEMO por padrao — REAL nunca e escolhido automaticamente aqui.
       expirySeconds: 60,
     });
     await candidate.authenticate(); // lanca se o SSID for invalido/expirado
