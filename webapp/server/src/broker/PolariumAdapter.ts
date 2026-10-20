@@ -215,18 +215,30 @@ export class PolariumAdapter implements BrokerAdapter {
     const digital = await sdk.digitalOptions();
     const now = sdk.currentTime();
     const underlying = digital.getUnderlyingsAvailableForTradingAt(now).find((u) => u.activeId === activeId);
-    if (!underlying) return null;
+    if (!underlying) {
+      console.error(`[getPayout] activeId ${activeId} nao esta em getUnderlyingsAvailableForTradingAt(now) agora.`);
+      return null;
+    }
 
     const instruments = await underlying.instruments();
+    const availableNow = instruments.getAvailableForBuyAt(now);
     // Escolhe o instrumento cujo periodo (segundos ate expiracao) bate com a expiracao configurada (M1 = 60).
-    const instrument = instruments
-      .getAvailableForBuyAt(now)
-      .find((i) => i.period === this.config.expirySeconds);
-    if (!instrument) return null;
+    const instrument = availableNow.find((i) => i.period === this.config.expirySeconds);
+    if (!instrument) {
+      console.error(
+        `[getPayout] nenhum instrumento com period=${this.config.expirySeconds}s disponivel para activeId ${activeId} agora. ` +
+          `Periodos disponiveis: [${availableNow.map((i) => i.period).join(', ')}]`
+      );
+      return null;
+    }
 
     // profitPercent() e um metodo real e confirmado da SDK — nao um valor inventado.
     const percent = instrument.profitPercent(amount);
-    return Number.isFinite(percent) ? percent : null;
+    if (!Number.isFinite(percent)) {
+      console.error(`[getPayout] profitPercent(${amount}) retornou valor nao finito para activeId ${activeId}: ${percent}`);
+      return null;
+    }
+    return percent;
   }
 
   async placeOrder(params: PlaceOrderParams): Promise<PlaceOrderAck> {

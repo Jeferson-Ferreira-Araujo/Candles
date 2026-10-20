@@ -224,7 +224,8 @@ export class OrderService extends EventEmitter {
     let payoutPercentage: number | null = null;
     try {
       payoutPercentage = await this.broker.getPayout(activeId, entryAmount);
-    } catch {
+    } catch (err) {
+      console.error(`[orders] getPayout(${activeId}, ${entryAmount}) lancou erro — bloqueando por PAYOUT_UNKNOWN:`, err);
       payoutPercentage = null;
     }
 
