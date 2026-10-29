@@ -151,6 +151,11 @@ export function ChartPage() {
   // ABERTA no grafico agora (parcial OU pronto) — pra marcar EXATAMENTE essas velas, nao so
   // avisar com um numero (ver detectStrategyProgress no servidor).
   const [chartSetupCandleTimes, setChartSetupCandleTimes] = useState<number[]>([]);
+  // totalStages da estrategia ABERTA no grafico agora — so pra legendar corretamente o marcador
+  // da ultima vela contada (ver markers abaixo): sem isso, "(última)" aparecia em qualquer
+  // confirmacao parcial, dando a entender que a estrategia ja tinha completado todas as etapas
+  // quando na verdade so faltava, por exemplo, a 3a de 5 (Compressao->Breakout).
+  const [chartProgressTotalStages, setChartProgressTotalStages] = useState<number | null>(null);
   const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
   const [scanInfo, setScanInfo] = useState<{ assetsScanned: number; tookMs: number; bestAssetName?: string } | null>(null);
   const [scanRanking, setScanRanking] = useState<AssetScanRanking[]>([]);
@@ -207,12 +212,14 @@ export function ChartPage() {
     if (!b || b === 'loading' || b.kind !== 'classic' || !b.strategyId || assetId === null) {
       setPendingSignal(null);
       setChartSetupCandleTimes([]);
+      setChartProgressTotalStages(null);
       return;
     }
     try {
       const { progress } = await api.getStrategyProgress(assetId, d, b.strategyId);
       setPendingSignal(progress?.readyNow ? progress.direction : null);
       setChartSetupCandleTimes(progress?.setupCandleTimes ?? []);
+      setChartProgressTotalStages(progress?.totalStages ?? null);
     } catch {
       // falha ao checar nao deve derrubar a tela — so nao mostra aviso dessa vez
     }
@@ -228,6 +235,7 @@ export function ChartPage() {
     setLiveCandle(null);
     setPendingSignal(null);
     setChartSetupCandleTimes([]);
+    setChartProgressTotalStages(null);
     setActiveOrders([]);
     setSrLevels([]);
     try {
@@ -659,16 +667,29 @@ export function ChartPage() {
   // Marca EXATAMENTE quais velas ja fechadas estao sendo contadas na analise da estrategia
   // aberta agora (parcial ou pronta) — numeradas na ordem (1a, 2a...), pra responder "quais
   // velas estao sendo contadas nessa analise". A ULTIMA contada ganha destaque proprio (ambar,
-  // nao azul) pra deixar claro que e a vela final antes da entrada — a proxima vela que abrir
-  // (ou a propria, se ja pronta) e onde a entrada acontece.
+  // nao azul). IMPORTANTE: so chamamos ela de "(última)" quando o setup esta de fato PRONTO
+  // (pendingSignal != null, banner "ENTRADA AGORA" ativo) — rotular assim numa confirmacao
+  // PARCIAL (ex.: 3a de 5 do Compressao->Breakout) dava a entender, errado, que a estrategia ja
+  // tinha completado todas as etapas. Enquanto parcial, mostra "de N" (igual a lista de
+  // vigilancia, ex. "3ª de 5") e chama a mais recente de "(mais recente)", nao "(última)".
+  const isSetupComplete = pendingSignal !== null;
+  const totalStagesLabel = chartProgressTotalStages ?? chartSetupCandleTimes.length;
   chartSetupCandleTimes.forEach((time, idx) => {
     const isLast = idx === chartSetupCandleTimes.length - 1;
+    const stageNum = idx + 1;
+    const text = isSetupComplete
+      ? isLast
+        ? `${stageNum}ª (última)`
+        : `${stageNum}ª`
+      : isLast
+        ? `${stageNum}ª de ${totalStagesLabel} (mais recente)`
+        : `${stageNum}ª de ${totalStagesLabel}`;
     markers.push({
       time,
       position: 'belowBar',
       color: isLast ? '#f59e0b' : '#38bdf8',
       shape: 'circle',
-      text: isLast ? `${idx + 1}ª (última)` : `${idx + 1}ª`,
+      text,
     });
   });
   // Cada entrada manual resolvida marca a sua PROPRIA vela de entrada (M1 = 60s antes da
