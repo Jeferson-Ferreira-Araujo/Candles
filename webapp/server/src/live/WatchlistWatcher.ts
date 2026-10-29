@@ -45,8 +45,13 @@ export class WatchlistWatcher {
   private readonly unsubscribers = new Map<number, () => void>();
   private readonly entriesByAsset = new Map<number, WatchlistEntry[]>();
   private readonly lastProgress = new Map<string, StrategyProgress | null>();
-  private readonly queue: number[] = [];
-  private inFlight = 0;
+  // Fila SERIALIZADA por ativo: nunca roda 2 checkAsset(mesmoAtivo) em paralelo. Sem isso, um
+  // fechamento de vela podia enfileirar outra checagem do mesmo ativo enquanto a anterior ainda
+  // buscava historico na corretora — se a mais NOVA terminasse primeiro (rede mais rapida) e a
+  // mais VELHA (com dado desatualizado) terminasse depois, ela sobrescrevia o progresso real com
+  // um estagio mais antigo (ex.: a lista voltava de "2a confirmacao" pra "1a confirmacao" sozinha).
+  private readonly pendingAssets = new Set<number>();
+  private readonly inFlightAssets = new Set<number>();
 
   constructor(
     private readonly broker: BrokerAdapter,
@@ -85,23 +90,29 @@ export class WatchlistWatcher {
     this.unsubscribers.clear();
     this.entriesByAsset.clear();
     this.lastProgress.clear();
-    this.queue.length = 0;
-    this.inFlight = 0;
+    this.pendingAssets.clear();
+    this.inFlightAssets.clear();
   }
 
+  /** So MARCA o ativo como "precisa checar" — se ja estiver rodando uma checagem dele agora,
+   * essa marca so faz ele rodar de novo (com dado fresco) assim que a atual terminar, nunca em
+   * paralelo com ela. */
   private enqueue(activeId: number): void {
-    this.queue.push(activeId);
+    this.pendingAssets.add(activeId);
     this.pump();
   }
 
   private pump(): void {
-    while (this.inFlight < CONCURRENCY && this.queue.length > 0) {
-      const activeId = this.queue.shift()!;
-      this.inFlight++;
+    if (this.inFlightAssets.size >= CONCURRENCY) return;
+    for (const activeId of this.pendingAssets) {
+      if (this.inFlightAssets.size >= CONCURRENCY) break;
+      if (this.inFlightAssets.has(activeId)) continue; // ja rodando — a marca em pendingAssets garante outra rodada depois
+      this.pendingAssets.delete(activeId);
+      this.inFlightAssets.add(activeId);
       this.checkAsset(activeId)
         .catch((err) => console.error('[watchlist] falha ao checar ativo', activeId, err instanceof Error ? err.message : err))
         .finally(() => {
-          this.inFlight--;
+          this.inFlightAssets.delete(activeId);
           this.pump();
         });
     }
