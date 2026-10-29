@@ -167,16 +167,23 @@ export function ChartPage() {
   // aviso ao vivo via LiveMonitorService, quando esta entre os ativos monitorados). Busca o
   // progresso INTEIRO (nao so "pronto ou nao") pra poder marcar no grafico quais velas estao
   // sendo contadas na analise agora, parcial ou pronta.
-  const checkPendingSignal = useCallback(async (bestOverride?: BestStrategyResult | null, assetIdOverride?: number) => {
+  const checkPendingSignal = useCallback(async (bestOverride?: BestStrategyResult | null, assetIdOverride?: number, daysOverride?: number) => {
     const b = bestOverride !== undefined ? bestOverride : bestRef.current;
     const assetId = assetIdOverride ?? watchingAssetIdRef.current;
+    // IMPORTANTE: usa o `days` passado explicitamente (ex.: SCAN_DAYS quando vem de um clique na
+    // lista de vigilancia), nunca so `daysRef.current` — antes, um clique na lista podia carregar
+    // o grafico com N dias de velas mas consultar o progresso com um `days` DIFERENTE (o que
+    // estivesse selecionado no filtro "Dias" da tela, que nao e resetado por esse clique),
+    // fazendo o calculo de medias/lookback da estrategia bater com uma janela de velas diferente
+    // da exibida — podendo resultar em "nenhuma indicacao" mesmo com a lista mostrando progresso.
+    const d = daysOverride ?? daysRef.current;
     if (!b || b === 'loading' || b.kind !== 'classic' || !b.strategyId || assetId === null) {
       setPendingSignal(null);
       setChartSetupCandleTimes([]);
       return;
     }
     try {
-      const { progress } = await api.getStrategyProgress(assetId, daysRef.current, b.strategyId);
+      const { progress } = await api.getStrategyProgress(assetId, d, b.strategyId);
       setPendingSignal(progress?.readyNow ? progress.direction : null);
       setChartSetupCandleTimes(progress?.setupCandleTimes ?? []);
     } catch {
@@ -223,7 +230,7 @@ export function ChartPage() {
     try {
       const result = await resolveStrategy(assetId, d, mode);
       setBest(result);
-      checkPendingSignal(result, assetId);
+      checkPendingSignal(result, assetId, d);
     } catch (err) {
       setBest(null);
       setChartError((prev) => prev ?? (err instanceof Error ? err.message : String(err)));
@@ -1137,9 +1144,18 @@ export function ChartPage() {
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
             {sortedWatchlist.map(([key, item]) => {
               const isCancelled = item.cancelledAt !== undefined;
-              // 100% = pronta pra entrar na proxima vela — a barra enche conforme as
-              // confirmacoes vao acontecendo, nao so o texto "Na de M".
-              const percent = isCancelled ? 100 : Math.round((item.progress.stage / item.progress.totalStages) * 100);
+              // 100% = pronta pra entrar na proxima vela. Entre uma confirmacao e a proxima, a
+              // barra agora cresce SUAVEMENTE a cada segundo conforme a vela atual vai se
+              // formando (em vez de ficar parada ate o fechamento e so entao pular pro proximo
+              // degrau) — usa o mesmo relogio de parede do contador de entrada, nunca passa do
+              // teto do proximo degrau (90% do caminho ate ele) pra nao sugerir confirmacao que
+              // ainda nao aconteceu de verdade.
+              const stepSize = 100 / item.progress.totalStages;
+              const elapsedFraction = Math.min(1, (60 - secondsToMinuteClose) / 60);
+              const percent =
+                isCancelled || item.progress.readyNow
+                  ? 100
+                  : Math.min(100, Math.round(item.progress.stage * stepSize + stepSize * elapsedFraction * 0.9));
               const barColor = isCancelled
                 ? 'bg-slate-500'
                 : item.progress.readyNow
