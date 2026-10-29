@@ -20,6 +20,16 @@ import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
 const SCAN_DAYS = 1; // periodo curto de proposito: a varredura roda em TODOS os ativos, 1 dia ja e pesado
 
+// Pedido explicito do usuario, apos 2 entradas em que o aviso "ENTRADA AGORA" ficou ligado o
+// minuto quase inteiro e desligou sozinho faltando ~2s pra fechar (o pior momento possivel pra
+// mudar de ideia): o aviso so acende dentro dos ultimos N segundos da vela — nunca antes — e,
+// uma vez aceso dentro dessa janela, fica TRAVADO ate a vela fechar (nenhuma rechecagem
+// consegue apagar ele de novo). Antes da janela, o setup pode estar "pronto" nos bastidores
+// (os marcadores de confirmacao no grafico continuam aparecendo normalmente), mas o aviso de
+// entrada em si so e exibido se, numa checagem feita JA dentro da janela, o servidor confirmar
+// que continua pronto — "nao provou, nao indica entrada".
+const ENTRY_CONFIRM_WINDOW_SECONDS = 10;
+
 /** Mesma forma do StrategyProgress do servidor (ver server/src/strategies/classicStrategies.ts)
  * — quanto do setup ja esta em pe pra um par ativo+estrategia vigiado. */
 interface StrategyProgress {
@@ -189,6 +199,10 @@ export function ChartPage() {
   strategyModeRef.current = strategyMode;
   const scanStartedRef = useRef(false);
   const chartRef = useRef<CandleChartHandle>(null);
+  // Ultimo pendingSignal exibido — usado so pra decidir se uma rechecagem pode DESLIGAR o aviso
+  // "ENTRADA AGORA" (ver TRAVA DOS ULTIMOS 20s em checkPendingSignal abaixo).
+  const pendingSignalRef = useRef<Direction | null>(null);
+  pendingSignalRef.current = pendingSignal;
   // Timer do recalculo com folga de 2s apos um fechamento de vela (ver efeito de CANDLE_CLOSED
   // abaixo) — fica numa ref, NAO num `return () => clearTimeout(...)` do proprio efeito, porque
   // esse efeito reroda a cada evento (inclusive tick de preco ao vivo), o que cancelava o timer
@@ -217,9 +231,28 @@ export function ChartPage() {
     }
     try {
       const { progress } = await api.getStrategyProgress(assetId, d, b.strategyId);
-      setPendingSignal(progress?.readyNow ? progress.direction : null);
+      // Os marcadores de confirmacao (quais velas estao contando) continuam refletindo o
+      // progresso de verdade o tempo todo, mesmo fora da janela de confirmacao final abaixo —
+      // so o AVISO de entrada em si (pendingSignal, banner "ENTRADA AGORA" + botoes pulsando)
+      // segue a regra especial.
       setChartSetupCandleTimes(progress?.setupCandleTimes ?? []);
       setChartProgressTotalStages(progress?.totalStages ?? null);
+
+      const secondsToClose = 60 - new Date().getSeconds();
+      const insideConfirmWindow = secondsToClose <= ENTRY_CONFIRM_WINDOW_SECONDS;
+      let nextPendingSignal: Direction | null;
+      if (pendingSignalRef.current !== null && insideConfirmWindow) {
+        // Ja confirmado e ainda dentro da janela final: fica TRAVADO — ignora qualquer
+        // rechecagem que tentaria apagar o aviso (ver ENTRY_CONFIRM_WINDOW_SECONDS acima).
+        nextPendingSignal = pendingSignalRef.current;
+      } else {
+        // Fora da janela (cedo demais, ou a vela ja fechou e isso aqui e uma checagem atrasada
+        // da vela anterior) OU ainda nao tinha confirmado antes: so acende se o servidor disser
+        // "pronto" NESTA checagem E estivermos dentro da janela final. "Pronto" fora da janela
+        // nunca acende o aviso sozinho — so os marcadores acima refletem isso.
+        nextPendingSignal = progress?.readyNow && insideConfirmWindow ? progress.direction : null;
+      }
+      setPendingSignal(nextPendingSignal);
     } catch {
       // falha ao checar nao deve derrubar a tela — so nao mostra aviso dessa vez
     }
@@ -400,6 +433,20 @@ export function ChartPage() {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // Checagem final de confirmacao: dentro dos ultimos ENTRY_CONFIRM_WINDOW_SECONDS segundos da
+  // vela, reconsulta o progresso a CADA segundo (em vez de esperar o proximo CANDLE_CLOSED ou a
+  // rede de seguranca de 15s, que podem nao cair exatamente dentro da janela) — e exatamente
+  // essa checagem, feita JA dentro da janela, que decide se o aviso "ENTRADA AGORA" acende (ver
+  // checkPendingSignal). Sem rodar aqui, o aviso podia nunca chegar a confirmar dentro da janela
+  // (se a ultima checagem antes dela tivesse sido feita cedo demais no minuto).
+  useEffect(() => {
+    const secondsToClose = 60 - now.getSeconds();
+    if (watchingAssetIdRef.current !== null && secondsToClose <= ENTRY_CONFIRM_WINDOW_SECONDS) {
+      checkPendingSignal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now]);
 
   // Rede de seguranca independente do WebSocket: o recalculo normal dos marcadores do grafico
   // (markers de confirmacao, "ENTRADA AGORA") depende de ver um evento CANDLE_CLOSED do ativo
