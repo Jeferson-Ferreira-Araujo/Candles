@@ -1326,58 +1326,65 @@ function TradePanel({
   const timeStr = now.toLocaleTimeString('pt-BR', { hour12: false });
   const secondsLeft = 60 - now.getSeconds(); // segundos ate a vela M1 atual fechar
 
+  // Em `horizontal` (barra inferior do celular em pe), relogio + DEMO/REAL + valor/Gale iam
+  // todos numa UNICA linha ao lado dos botoes Comprar/Vender — numa tela estreita isso
+  // espremia tudo (botoes minusculos, texto cortando) em vez de ficar usavel. Agora essa
+  // linha de cima quebra com flex-wrap se precisar, e Comprar/Vender formam uma segunda
+  // linha por conta, ocupando a largura toda — pedido explicito do usuario.
   return (
-    <div className={horizontal ? 'flex items-stretch gap-2' : 'space-y-2'}>
-      <div className={horizontal ? 'flex items-center gap-2 text-xs' : 'text-center'}>
-        <div className="font-mono text-base font-semibold text-slate-100 tabular-nums">{timeStr}</div>
-        <div className={`text-[10px] ${secondsLeft <= 5 ? 'text-amber-400 font-semibold' : 'text-slate-500'}`}>
-          {secondsLeft}s p/ fechar
+    <div className={horizontal ? 'flex flex-col gap-2' : 'space-y-2'}>
+      <div className={horizontal ? 'flex flex-wrap items-center gap-2' : 'space-y-2'}>
+        <div className={horizontal ? 'flex items-center gap-2 text-xs' : 'text-center'}>
+          <div className="font-mono text-base font-semibold text-slate-100 tabular-nums">{timeStr}</div>
+          <div className={`text-[10px] ${secondsLeft <= 5 ? 'text-amber-400 font-semibold' : 'text-slate-500'}`}>
+            {secondsLeft}s p/ fechar
+          </div>
+        </div>
+
+        <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
+          <button
+            type="button"
+            onClick={() => onChangeMode('DEMO')}
+            className={`rounded-md px-2 py-1 text-[10px] font-semibold border ${
+              settings?.mode === 'DEMO' ? 'bg-sky-700 border-sky-500 text-white' : 'border-slate-700 text-slate-400'
+            }`}
+          >
+            DEMO
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeMode('REAL')}
+            className={`rounded-md px-2 py-1 text-[10px] font-semibold border ${
+              settings?.mode === 'REAL' ? 'bg-rose-700 border-rose-500 text-white' : 'border-slate-700 text-slate-400'
+            }`}
+          >
+            REAL
+          </button>
+        </div>
+
+        <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
+          <input
+            type="number"
+            min={5}
+            value={settings?.entryAmount ?? ''}
+            onChange={(e) => onChangeAmount(Math.max(5, Number(e.target.value)))}
+            className="w-16 bg-slate-900 border border-slate-700 rounded-md px-1.5 py-1 text-xs"
+            title="Valor da entrada (R$)"
+          />
+          <select
+            value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
+            onChange={(e) => onChangeGale(Number(e.target.value) as 0 | 1 | 2)}
+            className="bg-slate-900 border border-slate-700 rounded-md px-1 py-1 text-xs"
+            title="Gale (reentrada após LOSS)"
+          >
+            <option value={0}>Sem Gale</option>
+            <option value={1}>Gale 1</option>
+            <option value={2}>Gale 2</option>
+          </select>
         </div>
       </div>
 
-      <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
-        <button
-          type="button"
-          onClick={() => onChangeMode('DEMO')}
-          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold border ${
-            settings?.mode === 'DEMO' ? 'bg-sky-700 border-sky-500 text-white' : 'border-slate-700 text-slate-400'
-          }`}
-        >
-          DEMO
-        </button>
-        <button
-          type="button"
-          onClick={() => onChangeMode('REAL')}
-          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold border ${
-            settings?.mode === 'REAL' ? 'bg-rose-700 border-rose-500 text-white' : 'border-slate-700 text-slate-400'
-          }`}
-        >
-          REAL
-        </button>
-      </div>
-
-      <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
-        <input
-          type="number"
-          min={5}
-          value={settings?.entryAmount ?? ''}
-          onChange={(e) => onChangeAmount(Math.max(5, Number(e.target.value)))}
-          className="w-16 bg-slate-900 border border-slate-700 rounded-md px-1.5 py-1 text-xs"
-          title="Valor da entrada (R$)"
-        />
-        <select
-          value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
-          onChange={(e) => onChangeGale(Number(e.target.value) as 0 | 1 | 2)}
-          className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-1 py-1 text-xs"
-          title="Gale (reentrada após LOSS)"
-        >
-          <option value={0}>Sem Gale</option>
-          <option value={1}>Gale 1</option>
-          <option value={2}>Gale 2</option>
-        </select>
-      </div>
-
-      <div className={horizontal ? 'flex-1 flex items-center gap-2' : 'space-y-1.5'}>
+      <div className={horizontal ? 'flex items-stretch gap-2' : 'space-y-1.5'}>
         <button
           type="button"
           onClick={onSell}
