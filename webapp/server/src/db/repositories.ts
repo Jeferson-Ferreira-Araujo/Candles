@@ -192,6 +192,15 @@ export async function listUnknownOrders(db: Db): Promise<OrderRecord[]> {
   return rows.map(rowToOrder);
 }
 
+/** Ordens que a corretora ja confirmou (status CONFIRMED) mas que nunca chegaram a FILLED — o
+ * polling que esperaria o resultado (OrderService.pollForResolution) so existe em memoria, entao
+ * um restart do processo (deploy, crash) no meio do caminho mata esse loop e a ordem fica presa
+ * aqui pra sempre sem reconciliacao (ver reconcileUnresolvedOrders em index.ts). */
+export async function listConfirmedOrders(db: Db): Promise<OrderRecord[]> {
+  const { rows } = await db.query(`SELECT * FROM orders WHERE status = 'CONFIRMED'`);
+  return rows.map(rowToOrder);
+}
+
 export async function insertEvent(db: Db, e: AppEvent): Promise<void> {
   await db.query(`INSERT INTO events (id, type, active_id, payload_json, created_at) VALUES ($1, $2, $3, $4, $5)`, [
     e.id,

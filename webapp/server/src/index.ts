@@ -16,8 +16,8 @@ import {
   getDailyResult,
   insertEvent,
   listUnknownOrders,
+  listConfirmedOrders,
   listOrders,
-  updateOrder,
   listCustomPatterns,
   getCustomPattern,
   getActivePattern,
@@ -35,6 +35,7 @@ import {
   fetchClosedCandles,
   computeClassicStrategyResult,
   getCurrentSupportResistanceLevels,
+  startOfTodayUtc,
 } from './strategies/classicStrategies.js';
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
@@ -101,6 +102,9 @@ async function finishLogin(res: import('express').Response): Promise<void> {
   });
 
   await ensureLiveServicesStarted();
+  // Nao bloqueia a resposta do login — ordens presas de uma sessao anterior (ver
+  // reconcileStuckOrders) sao reconciliadas em segundo plano assim que a sessao nova sobe.
+  reconcileStuckOrders().catch((err) => console.error('[reconcile] erro inesperado:', err));
   res.json({ ok: true });
 }
 
@@ -286,7 +290,7 @@ app.post('/api/classic-strategy/pending', async (req, res) => {
   }
   try {
     const now = Math.floor(Date.now() / 1000);
-    const from = now - days! * 24 * 60 * 60;
+    const from = startOfTodayUtc() - (days! - 1) * 24 * 60 * 60;
     const candles = (await brokerManager.get().getHistoricalCandles(activeId!, CANDLE_SIZE_M1, from, now))
       .filter((c) => c.isClosed)
       .sort((a, b) => a.from - b.from);
@@ -591,7 +595,7 @@ app.get('/api/candles', async (req, res) => {
   }
   try {
     const now = Math.floor(Date.now() / 1000);
-    const from = now - days * 24 * 60 * 60;
+    const from = startOfTodayUtc() - (days - 1) * 24 * 60 * 60;
     const candles = (await brokerManager.get().getHistoricalCandles(activeId, CANDLE_SIZE_M1, from, now))
       .filter((c) => c.isClosed)
       .sort((a, b) => a.from - b.from);
@@ -749,30 +753,30 @@ async function ensureLiveServicesStarted(): Promise<void> {
 }
 
 /**
- * Reconciliacao de ordens UNKNOWN ao subir o servidor: para as que ja tem brokerOrderId
- * (ou seja, a corretora chegou a confirmar o pedido antes da conexao cair), tenta buscar o
- * resultado real. Ordens sem brokerOrderId (a chamada de rede falhou ANTES de qualquer
- * confirmacao) ficam UNKNOWN permanentemente — nunca sao reenviadas.
+ * Reconciliacao de ordens presas (UNKNOWN ou CONFIRMED) — pra cada uma com brokerOrderId
+ * (ou seja, a corretora chegou a confirmar o pedido), tenta buscar o resultado real via
+ * OrderService.reconcileStuckOrder (atualiza o registro, o resultado do dia e avisa o
+ * cliente, sem nunca reenviar nem disparar Gale). Ordens sem brokerOrderId (a chamada de
+ * rede falhou ANTES de qualquer confirmacao) ficam UNKNOWN permanentemente.
+ *
+ * Por que isso existe: o polling que espera o resultado (OrderService.pollForResolution) so
+ * vive em memoria — um restart do processo (deploy, crash) no meio do caminho mata esse loop
+ * e a ordem fica CONFIRMED pra sempre, sem resultado/PnL, mesmo que a corretora ja tenha
+ * resolvido ha muito tempo. Chamada no boot do servidor E logo apos cada login (so entao
+ * brokerManager.isReady() fica true em producao, ja que o processo sobe SEM sessao ate o
+ * usuario logar).
  */
-async function reconcileUnknownOrders(): Promise<void> {
-  if (!brokerManager.isReady()) return; // sem sessao (modo polarium sem login ainda) — nada a reconciliar agora
-  const broker = brokerManager.get();
-  const unknown = (await listUnknownOrders(db)).filter((o) => o.brokerOrderId);
-  if (unknown.length === 0) return;
-  console.log(`[reconcile] ${unknown.length} ordem(ns) UNKNOWN com brokerOrderId — tentando reconciliar...`);
-  for (const order of unknown) {
+async function reconcileStuckOrders(): Promise<void> {
+  if (!brokerManager.isReady() || !orderService) return; // sem sessao/servico ainda — nada a reconciliar agora
+  const settings = await loadSettings(db);
+  const [unknown, confirmed] = await Promise.all([listUnknownOrders(db), listConfirmedOrders(db)]);
+  const stuck = [...unknown, ...confirmed].filter((o) => o.brokerOrderId);
+  if (stuck.length === 0) return;
+  console.log(`[reconcile] ${stuck.length} ordem(ns) presa(s) (UNKNOWN/CONFIRMED) com brokerOrderId — tentando reconciliar...`);
+  for (const order of stuck) {
     try {
-      const resolution = await broker.getOrderResult(order.brokerOrderId!);
-      if (resolution) {
-        await updateOrder(db, order.id, {
-          status: 'FILLED',
-          resolvedAt: Date.now(),
-          result: resolution.result,
-          pnl: resolution.pnl,
-          payoutPercentage: resolution.payoutPercentage,
-        });
-        console.log(`[reconcile] Ordem ${order.id} resolvida: ${resolution.result}`);
-      }
+      const outcome = await orderService.reconcileStuckOrder(order, settings);
+      if (outcome === 'resolved') console.log(`[reconcile] Ordem ${order.id} resolvida.`);
     } catch (err) {
       console.error(`[reconcile] Falha ao reconciliar ordem ${order.id}:`, err instanceof Error ? err.message : err);
     }
@@ -798,8 +802,8 @@ httpServer.listen(PORT, () => {
   if (brokerManager.requiresLogin) {
     console.log('[server] Aguardando login via POST /api/auth/login (tela de login do frontend).');
   }
-  reconcileUnknownOrders()
-    .then(() => ensureLiveServicesStarted())
+  ensureLiveServicesStarted()
+    .then(() => reconcileStuckOrders())
     .catch((err) => console.error('[live] erro inesperado ao iniciar:', err));
 });
 

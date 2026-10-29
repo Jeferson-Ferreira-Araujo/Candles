@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Db } from '../db/db.js';
-import type { AppEvent, Candle, Direction, Settings } from '@polarium12c/shared';
+import type { AppEvent, Candle, Direction, OrderRecord, Settings } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { evaluateSafety, type SafetyBlockReason, type SafetyContext } from './SafetyGate.js';
 import {
@@ -313,7 +313,43 @@ export class OrderService extends EventEmitter {
       return;
     }
     // Esgotou as tentativas sem resolucao: a ordem fica CONFIRMED (nao UNKNOWN — sabemos
-    // que foi aceita, so nao confirmamos o resultado ainda). Reconciliacao manual depois.
+    // que foi aceita, so nao confirmamos o resultado ainda). Reconciliacao manual depois
+    // (ver reconcileStuckOrder, chamada no boot do servidor e apos cada login).
+  }
+
+  /**
+   * Reconcilia uma ordem presa em CONFIRMED (ou UNKNOWN com brokerOrderId) — o caso tipico e
+   * um restart do processo (deploy, crash) no meio do polling em memoria de pollForResolution,
+   * que mata o loop e deixa a ordem sem resultado pra sempre sem isto. Chamada no boot do
+   * servidor e logo apos cada login bem-sucedido (ver index.ts).
+   *
+   * Decisao explicita: NUNCA dispara reentrada de Gale aqui, mesmo que o resultado reconciliado
+   * seja LOSS. Gale so faz sentido entrando na vela SEGUINTE a perda — por definicao, a essa
+   * altura (servidor reiniciando bem depois) essa janela ja passou, e abrir uma ordem nova agora
+   * seria uma entrada arbitraria fora de hora, nao uma reentrada de verdade.
+   */
+  async reconcileStuckOrder(order: OrderRecord, settings: Settings): Promise<'resolved' | 'still_open' | 'skipped'> {
+    if (!order.brokerOrderId) return 'skipped'; // nunca confirmado pela corretora — nada pra consultar
+    let resolution;
+    try {
+      resolution = await this.broker.getOrderResult(order.brokerOrderId);
+    } catch (err) {
+      console.error(`[reconcile] erro consultando resultado da ordem ${order.id}:`, err instanceof Error ? err.message : err);
+      return 'still_open';
+    }
+    if (!resolution) return 'still_open';
+
+    await updateOrder(this.db, order.id, {
+      status: 'FILLED',
+      resolvedAt: Date.now(),
+      result: resolution.result,
+      pnl: resolution.pnl,
+      payoutPercentage: resolution.payoutPercentage,
+    });
+    await updateSignalStatus(this.db, order.signalId, resolution.result);
+    await this.applyToDailyResult(order.activeId, resolution.result, resolution.pnl, settings);
+    this.emitEvent(resolution.result, order.activeId, { signalId: order.signalId, orderId: order.id, pnl: resolution.pnl, galeLevel: order.galeLevel });
+    return 'resolved';
   }
 
   private async applyToDailyResult(activeId: number, result: 'WIN' | 'LOSS' | 'DOJI', pnl: number, settings: Settings): Promise<void> {

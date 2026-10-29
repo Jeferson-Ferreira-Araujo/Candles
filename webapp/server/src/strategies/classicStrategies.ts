@@ -635,11 +635,22 @@ export function detectPendingSignal(
   return { direction: pending.direction, signalMetricValue: pending.signalMetricValue };
 }
 
+/** Inicio (epoch seconds, UTC) do dia de calendario de hoje — "dia" no seletor "Dias" da tela
+ * do Grafico significa dia de CALENDARIO, nao uma janela rolante de 24h: com Dias=1, o
+ * historico deve comecar na abertura de HOJE (00:00 UTC), nao "24h atras agora", que podia
+ * incluir pedaco de ontem e cortar fora parte de hoje dependendo da hora do clique. */
+export function startOfTodayUtc(): number {
+  const now = new Date();
+  return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000);
+}
+
 /** So o fetch (parte lenta, de rede) — separado do calculo pra poder buscar o historico UMA
- * vez e rodar varias estrategias em cima do mesmo array (ver runAllClassicStrategiesForAsset). */
+ * vez e rodar varias estrategias em cima do mesmo array (ver runAllClassicStrategiesForAsset).
+ * `days` conta dias de CALENDARIO incluindo hoje (days=1 -> so hoje; days=7 -> hoje + 6 dias
+ * anteriores, cada um comecando na propria abertura) — ver startOfTodayUtc. */
 export async function fetchClosedCandles(broker: BrokerAdapter, activeId: number, days: number): Promise<Candle[]> {
   const now = Math.floor(Date.now() / 1000);
-  const from = now - days * 24 * 60 * 60;
+  const from = startOfTodayUtc() - (days - 1) * 24 * 60 * 60;
   return (await broker.getHistoricalCandles(activeId, CANDLE_SIZE_M1, from, now))
     .filter((c) => c.isClosed)
     .sort((a, b) => a.from - b.from);

@@ -59,13 +59,14 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
     refresh();
   }, []);
 
-  // Reflete atualizacoes de settings vindas de outra aba/cliente, e recarrega saldo/
-  // resultado do dia quando algo relevante acontece (ordem resolvida, stop atingido).
+  // Recarrega saldo E resultado do dia quando algo relevante acontece (ordem resolvida, stop
+  // atingido) — sem isso o saldo no cabecalho so atualizava ao recarregar a pagina manualmente,
+  // mesmo com o resultado (WIN/LOSS) ja tendo chegado e mudado o saldo de verdade na corretora.
   useEffect(() => {
     const last = events[0];
     if (!last) return;
     if (['WIN', 'LOSS', 'DOJI', 'STOP_WIN', 'STOP_LOSS'].includes(last.type)) {
-      api.getDailyResult().then(setDailyResult).catch(() => {});
+      refresh().catch(() => {});
     }
   }, [events]);
 

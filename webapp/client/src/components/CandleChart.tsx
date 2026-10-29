@@ -66,6 +66,10 @@ export interface CandleChartHandle {
   setVisibleRange: (from: number, to: number) => void;
 }
 
+// Quantas velas ficam visiveis quando o grafico abre (ou recarrega um ativo novo) — nao o
+// historico inteiro buscado (que pode ser 1+ dia de M1, centenas/milhares de velas).
+const INITIAL_VISIBLE_CANDLES = 80;
+
 function toCandlestickData(c: Candle): CandlestickData<Time> {
   return { time: c.from as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close };
 }
@@ -142,13 +146,20 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Carga do historico: redesenha tudo e so ENTAO ajusta a visao, mostrando a ponta mais
-  // recente (horario atual) a direita — acontece so quando `candles` muda de referencia
-  // (novo carregamento), nunca a cada tick.
+  // Carga do historico: redesenha tudo e so ENTAO ajusta a visao, mostrando so as ultimas
+  // INITIAL_VISIBLE_CANDLES velas (nao o dia INTEIRO espremido na tela) com a ponta mais
+  // recente (agora) a direita — acontece so quando `candles` muda de referencia (novo
+  // carregamento), nunca a cada tick. scrollToRealTime() sozinho so cuida do PAN (pra onde
+  // rolar), nao do ZOOM — sem fixar o range logico aqui, o grafico abre com o auto-fit padrao
+  // da lib (todo o historico de uma vez, ex.: o dia inteiro quando Dias=1), que faz o usuario
+  // ter que dar zoom manualmente toda vez so pra ver os candles recentes direito.
   useEffect(() => {
-    if (!seriesRef.current) return;
+    if (!seriesRef.current || !chartRef.current) return;
     seriesRef.current.setData(candles.map(toCandlestickData));
-    chartRef.current?.timeScale().scrollToRealTime();
+    if (candles.length > 0) {
+      const from = Math.max(0, candles.length - INITIAL_VISIBLE_CANDLES);
+      chartRef.current.timeScale().setVisibleLogicalRange({ from, to: candles.length - 1 + 5 });
+    }
   }, [candles]);
 
   // Tick ao vivo: atualiza so a ultima barra (ou acrescenta uma nova, se for um periodo novo)
