@@ -146,6 +146,12 @@ export interface ClassicStrategyInfo {
   description: string;
 }
 
+// Engolfo, Pin Bar e Falso Rompimento ficam FORA desta lista por pedido explicito: sao
+// estrategias de "uma vela so" (o padrao bate ou nao bate numa unica vela, sem sequencia de
+// confirmacoes pra acompanhar) — o usuario quer so estrategias com confirmacao em varias
+// etapas/cenarios comprovaveis. Os detectores continuam existindo em classicStrategies.ts (server)
+// e os tipos/params aqui (reversivel, nao apagado), so nao aparecem mais no seletor nem entram em
+// nenhuma varredura ("Verificar"), scan-strategy ou vigilancia — tudo deriva desta lista.
 export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
   {
     id: 'support_resistance',
@@ -157,16 +163,6 @@ export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
     id: 'sequence_reversal',
     name: 'Reversão após sequência',
     description: 'N velas seguidas da mesma cor, seguidas de uma vela de reversão — entra na vela seguinte.',
-  },
-  {
-    id: 'engulfing',
-    name: 'Engolfo (Engulfing)',
-    description: 'O corpo da vela atual engolfa o corpo da anterior, com cores opostas — entra na vela seguinte.',
-  },
-  {
-    id: 'pin_bar',
-    name: 'Pin Bar / Rejeição',
-    description: 'Corpo pequeno + pavio grande de um lado + fechamento perto do extremo oposto — entra na vela seguinte.',
   },
   {
     id: 'impulse_pullback',
@@ -182,11 +178,6 @@ export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
     id: 'inside_bar_breakout',
     name: 'Inside Bar + Rompimento',
     description: 'Uma ou mais velas dentro do range da vela-mãe, seguidas de rompimento — entra na vela seguinte.',
-  },
-  {
-    id: 'fakeout',
-    name: 'Falso Rompimento (Fakeout)',
-    description: 'Rompe a máxima/mínima das últimas 5 velas mas fecha de volta dentro do range — entra na vela seguinte.',
   },
   {
     id: 'three_soldiers',
