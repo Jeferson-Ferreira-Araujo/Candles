@@ -22,6 +22,10 @@ const DAYS = 1; // mesmo periodo curto da varredura que tipicamente origina a li
 // Velas M1 de ativos diferentes fecham todas perto do mesmo segundo (topo do minuto) — mesmo
 // com poucos pares vigiados, uma fila com concorrencia limitada evita rajadas na corretora.
 const CONCURRENCY = 5;
+// Folga antes de reconsultar o historico depois de um fechamento de vela — da tempo da
+// corretora indexar a vela que acabou de fechar na API de historico antes de perguntarmos por
+// ela de novo (ver enqueueAfterCandleClose).
+const CANDLE_CLOSE_SETTLE_DELAY_MS = 2000;
 
 function sameProgress(a: StrategyProgress | null, b: StrategyProgress | null): boolean {
   if (a === null || b === null) return a === b;
@@ -64,6 +68,7 @@ export class WatchlistWatcher {
   // um estagio mais antigo (ex.: a lista voltava de "2a confirmacao" pra "1a confirmacao" sozinha).
   private readonly pendingAssets = new Set<number>();
   private readonly inFlightAssets = new Set<number>();
+  private readonly pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly broker: BrokerAdapter,
@@ -84,7 +89,7 @@ export class WatchlistWatcher {
       this.entriesByAsset.set(entry.activeId, [entry]);
       const unsubscribe = await this.broker.subscribeCandles(entry.activeId, CANDLE_SIZE_M1, (candle) => {
         if (!candle.isClosed) return;
-        this.enqueue(entry.activeId);
+        this.enqueueAfterCandleClose(entry.activeId);
       });
       this.unsubscribers.set(entry.activeId, unsubscribe);
     }
@@ -104,6 +109,8 @@ export class WatchlistWatcher {
     this.lastProgress.clear();
     this.pendingAssets.clear();
     this.inFlightAssets.clear();
+    for (const timer of this.pendingTimers) clearTimeout(timer);
+    this.pendingTimers.clear();
   }
 
   /** So MARCA o ativo como "precisa checar" — se ja estiver rodando uma checagem dele agora,
@@ -112,6 +119,18 @@ export class WatchlistWatcher {
   private enqueue(activeId: number): void {
     this.pendingAssets.add(activeId);
     this.pump();
+  }
+
+  /** Mesma coisa que `enqueue`, mas com uma folga antes de checar — a corretora leva um
+   * instante pra disponibilizar a vela que ACABOU de fechar na API de historico (confirmado:
+   * sem essa folga, a vigilancia ficava sistematicamente 1 vela atrasada em relacao ao que o
+   * proprio grafico aberto, que reage ao mesmo fechamento por outro caminho, ja mostrava). */
+  private enqueueAfterCandleClose(activeId: number): void {
+    const timer = setTimeout(() => {
+      this.pendingTimers.delete(timer);
+      this.enqueue(activeId);
+    }, CANDLE_CLOSE_SETTLE_DELAY_MS);
+    this.pendingTimers.add(timer);
   }
 
   private pump(): void {
