@@ -472,7 +472,7 @@ app.post('/api/scan-strategy', async (req, res) => {
       strategyId: safeStrategyId,
       strategyName,
       best: ranking[0] ?? null,
-      top: ranking.slice(0, 5),
+      top: ranking.slice(0, 20),
       assetsScanned: assets.length,
       tookMs: Date.now() - startedAt,
     });

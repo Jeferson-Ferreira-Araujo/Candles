@@ -611,6 +611,167 @@ function detectSignals(candles: Candle[], strategy: ClassicStrategyConfig): RawS
   }
 }
 
+export interface StrategyProgress {
+  /** Quantas confirmacoes do setup ja estao em pe, contando a ATUAL (ultima vela fechada). */
+  stage: number;
+  /** Quantas confirmacoes o setup inteiro precisa antes da entrada. */
+  totalStages: number;
+  /** So conhecida quando o setup de fato completa (stage === totalStages) — null enquanto so
+   * parcialmente formado, pra nao sugerir uma direcao que ainda pode nao se confirmar. */
+  direction: Direction | null;
+  /** true = a proxima vela (que vai comecar agora) e a entrada — equivalente a `detectPendingSignal`. */
+  readyNow: boolean;
+}
+
+/**
+ * Progresso parcial do setup (quantas confirmacoes de N ja estao em pe) — SO pras familias que
+ * sao literalmente uma sequencia de velas em construcao (reversao apos sequencia, 3 Candles de
+ * Impulso, Compressao->Breakout, Inside Bar, Dupla Rejeicao, Impulso+Pullback). As demais
+ * (Engolfo, Pin Bar, Falso Rompimento, Suporte/Resistencia) nao tem uma nocao de "quantidade de
+ * velas" — sao uma condicao que bate ou nao bate numa vela so (ou, no caso de Suporte/
+ * Resistencia, numa combinacao de indicadores) — pra essas, null aqui significa "sem estagio
+ * parcial", e o chamador (detectStrategyProgress) usa so o binario de detectPendingSignal.
+ */
+function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfig): { stage: number; totalStages: number } | null {
+  if (candles.length === 0) return null;
+  const last = candles[candles.length - 1]!;
+
+  switch (strategy.id) {
+    case 'sequence_reversal': {
+      const p = strategy.params;
+      const totalStages = p.sequenceLength + 1;
+      const lastColor = candleColor(last);
+      if (lastColor === 'DOJI') return null;
+      let run = 1;
+      for (let i = candles.length - 2; i >= 0 && run < p.sequenceLength; i--) {
+        if (candleColor(candles[i]!) === lastColor) run++;
+        else break;
+      }
+      return { stage: run, totalStages };
+    }
+
+    case 'three_soldiers': {
+      const totalStages = 3;
+      let stage = 0;
+      let prevClose: number | null = null;
+      let runColor: 'G' | 'R' | null = null;
+      // Anda de tras pra frente contando quantas velas recentes, em sequencia, ja cumprem
+      // sozinhas o padrao (cor + corpo forte + pavio oposto pequeno) E progridem na mesma
+      // direcao da vela seguinte (mais recente) — para no primeiro candle que quebra alguma regra.
+      for (let i = candles.length - 1; i >= 0 && stage < totalStages; i--) {
+        const c = candles[i]!;
+        const color = candleColor(c);
+        if (color === 'DOJI') break;
+        if (runColor === null) runColor = color;
+        else if (color !== runColor) break;
+
+        const body = bodyPercentage(c);
+        const oppositeWick = runColor === 'G' ? upperWickPercentage(c) : lowerWickPercentage(c);
+        if (body === null || body < THREE_SOLDIERS_MIN_BODY_PERCENT) break;
+        if (oppositeWick === null || oppositeWick > THREE_SOLDIERS_MAX_OPPOSITE_WICK_PERCENT) break;
+
+        if (prevClose !== null) {
+          const progressing = runColor === 'G' ? prevClose > c.close : prevClose < c.close;
+          if (!progressing) break;
+        }
+        prevClose = c.close;
+        stage++;
+      }
+      return stage > 0 ? { stage, totalStages } : null;
+    }
+
+    case 'compression_breakout': {
+      const p = strategy.params;
+      const totalStages = p.compressionLength + 1;
+      if (candles.length <= p.medianLookback + p.compressionLength) return null;
+      const lookback = candles.slice(candles.length - 1 - p.compressionLength - p.medianLookback, candles.length - 1 - p.compressionLength);
+      const medianRange = median(lookback.map(candleRange));
+      if (medianRange === 0) return null;
+      let stage = 0;
+      for (let i = candles.length - 1; i >= 0 && stage < p.compressionLength; i--) {
+        if (candleRange(candles[i]!) <= medianRange * p.maxCompressionRangeRatio) stage++;
+        else break;
+      }
+      return stage > 0 ? { stage, totalStages } : null;
+    }
+
+    case 'inside_bar_breakout': {
+      // 2 estagios: 1) ja existe pelo menos 1 inside bar dentro do range de uma vela-mae
+      // recente; 2) a vela atual rompe esse range (pronta — ver detectPendingSignal).
+      if (candles.length < 2) return null;
+      const mother = candles[candles.length - 2]!;
+      const current = candles[candles.length - 1]!;
+      const isInsideSoFar = current.high < mother.high && current.low > mother.low;
+      return isInsideSoFar ? { stage: 1, totalStages: 2 } : null;
+    }
+
+    case 'double_rejection': {
+      const p = DOUBLE_REJECTION_MEDIAN_LOOKBACK;
+      if (candles.length <= p) return null;
+      const medianRange = median(candles.slice(candles.length - 1 - p, candles.length - 1).map(candleRange));
+      if (medianRange === 0) return null;
+      const searchEnd = candles.length - 1 - DOUBLE_REJECTION_MIN_GAP;
+      const searchStart = Math.max(0, candles.length - 1 - DOUBLE_REJECTION_SEARCH_WINDOW);
+      for (let k = searchStart; k <= searchEnd; k++) {
+        const first = candles[k]!;
+        const firstLowerWick = lowerWickPercentage(first);
+        const firstUpperWick = upperWickPercentage(first);
+        if (
+          (firstLowerWick !== null && firstLowerWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT) ||
+          (firstUpperWick !== null && firstUpperWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT)
+        ) {
+          return { stage: 1, totalStages: 2 }; // ja ha uma 1a rejeicao valida esperando a 2a testar o mesmo nivel
+        }
+      }
+      return null;
+    }
+
+    case 'impulse_pullback':
+    case 'impulse_pullback_50': {
+      const lookback = strategy.id === 'impulse_pullback' ? strategy.params.medianLookback : IMPULSE_PULLBACK_50_MEDIAN_LOOKBACK;
+      const minMultiplier =
+        strategy.id === 'impulse_pullback' ? strategy.params.minImpulseRangeMultiplier : IMPULSE_PULLBACK_50_MIN_IMPULSE_MULTIPLIER;
+      if (candles.length <= lookback) return null;
+      const window = candles.slice(candles.length - 1 - lookback, candles.length - 1);
+      const medianRange = median(window.map(candleRange));
+      if (medianRange === 0) return null;
+      const impulse = candles[candles.length - 1]!;
+      const impulseColor = candleColor(impulse);
+      if (impulseColor === 'DOJI') return null;
+      if (candleRange(impulse) < medianRange * minMultiplier) return null;
+      return { stage: 1, totalStages: 2 }; // impulso acabou de fechar — falta so o pullback confirmar
+    }
+
+    // Engolfo, Pin Bar, Falso Rompimento e Suporte/Resistencia nao tem "quantidade de velas"
+    // parcial — ou a condicao bate numa vela so, ou nao bate ainda (ver detectStrategyProgress).
+    case 'engulfing':
+    case 'pin_bar':
+    case 'fakeout':
+    case 'support_resistance':
+      return null;
+  }
+}
+
+/**
+ * Visao combinada pra lista de vigilancia: progresso parcial (quando a familia tiver essa
+ * nocao) + o binario real de "pronta agora" (sempre via detectPendingSignal, o MESMO caminho
+ * testado que decide a entrada de verdade — nunca diverge). Devolve null quando nao ha
+ * absolutamente nada em andamento (nem parcial, nem pronto).
+ */
+export function detectStrategyProgress(closedCandles: Candle[], strategy: ClassicStrategyConfig): StrategyProgress | null {
+  const ready = detectPendingSignal(closedCandles, strategy);
+  const partial = detectPartialProgress(closedCandles, strategy);
+
+  if (ready) {
+    const totalStages = partial?.totalStages ?? 1;
+    return { stage: totalStages, totalStages, direction: ready.direction, readyNow: true };
+  }
+  if (partial) {
+    return { stage: partial.stage, totalStages: partial.totalStages, direction: null, readyNow: false };
+  }
+  return null;
+}
+
 /**
  * Verifica se o setup da estrategia ACABOU de se completar na ultima vela fechada — ou seja,
  * se a vela que esta se formando agora e a entrada (compra/venda). Reaproveita os mesmos

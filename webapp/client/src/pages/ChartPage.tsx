@@ -20,6 +20,23 @@ import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
 const SCAN_DAYS = 1; // periodo curto de proposito: a varredura roda em TODOS os ativos, 1 dia ja e pesado
 
+/** Mesma forma do StrategyProgress do servidor (ver server/src/strategies/classicStrategies.ts)
+ * — quanto do setup ja esta em pe pra um par ativo+estrategia vigiado. */
+interface StrategyProgress {
+  stage: number;
+  totalStages: number;
+  direction: Direction | null;
+  readyNow: boolean;
+}
+
+interface WatchlistItem {
+  activeId: number;
+  assetName: string;
+  strategyId: ClassicStrategyId;
+  strategyName: string;
+  progress: StrategyProgress;
+}
+
 /** 'auto' = deixa o app escolher a melhor entre todas; os demais sao escolha manual do usuario. */
 type StrategyMode = 'auto' | 'pattern' | ClassicStrategyId;
 
@@ -111,7 +128,7 @@ export function ChartPage() {
   // Chave composta `activeId:strategyId` — agora vigiamos TODOS os ativos x TODAS as
   // estrategias, entao o mesmo ativo pode ter mais de um aviso ativo ao mesmo tempo (uma
   // estrategia diferente cada), nao so um por ativo como antes (so top 3).
-  const [watchlistSignals, setWatchlistSignals] = useState<Record<string, WatchlistEntry & { direction: Direction }>>({});
+  const [watchlistProgress, setWatchlistProgress] = useState<Record<string, WatchlistItem>>({});
   const { events, lastCandleUpdate } = useLiveSocket();
   const { refreshHeader } = useOutletContext<{ events: AppEvent[]; settings: Settings | null; refreshHeader: () => Promise<void> }>();
   const watchingAssetIdRef = useRef<number | null>(null);
@@ -209,19 +226,18 @@ export function ChartPage() {
     applyStrategy(mode);
   }
 
-  // Vigia em segundo plano os pares ativo+estrategia do RANKING (ate 5) — avisa via WebSocket
-  // quando "esse mesmo cenario" (o que colocou aquele ativo no ranking) comeca a se formar de
-  // novo, mesmo com o usuario olhando outro ativo no grafico. Dedup por ativo+estrategia (o
-  // ranking ja vem sem repetir), cap de seguranca em 5 — poucos pares, sem o risco de
-  // sobrecarga que vigiar TODOS os ativos tinha.
+  // Vigia em segundo plano os pares ativo+estrategia do RANKING (ate 20, do 1o ao 20o colocado)
+  // — avisa via WebSocket quando "esse mesmo cenario" (o que colocou aquele ativo no ranking)
+  // comeca a se formar de novo, mesmo com o usuario olhando outro ativo no grafico. Dedup por
+  // ativo+estrategia (o ranking ja vem sem repetir).
   function updateWatchlistFromRanking(top: AssetScanRanking[]) {
-    const entries: WatchlistEntry[] = top.slice(0, 5).map((row) => ({
+    const entries: WatchlistEntry[] = top.slice(0, 20).map((row) => ({
       activeId: row.activeId,
       assetName: row.assetName,
       strategyId: row.strategyId,
       strategyName: row.strategyName,
     }));
-    setWatchlistSignals({});
+    setWatchlistProgress({});
     api.setWatchlist(entries).catch(() => {});
   }
 
@@ -257,7 +273,7 @@ export function ChartPage() {
         setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
         setScanRanking(res.top);
         updateWatchlistFromRanking(res.top);
-        setShowRanking(true); // so 5 linhas agora — cabe aberto direto, sem precisar clicar de novo
+        setShowRanking(true); // abre direto (tabela tem scroll), sem precisar clicar de novo
         setScanStatus('done');
         if (res.best) {
           setDays(SCAN_DAYS);
@@ -324,19 +340,26 @@ export function ChartPage() {
     };
   }, []);
 
-  // Avisos da watchlist (TODOS os ativos x TODAS as estrategias, vigiados em segundo plano no
-  // servidor desde o login) — chegam mesmo que o usuario esteja olhando outro ativo no grafico
-  // agora. O servidor so manda evento quando um sinal APARECE ou SOME (nunca fica reportando
-  // "sem sinal" a cada fechamento de vela pra nao inundar a tela).
+  // Progresso das estrategias do ranking (ate 20 pares ativo+estrategia, vigiados em segundo
+  // plano no servidor desde a ultima verificacao) — chega mesmo que o usuario esteja olhando
+  // outro ativo no grafico agora. O servidor manda um snapshot inicial assim que a watchlist e
+  // definida e dali em diante so quando o progresso de um par MUDA (nunca fica reportando o
+  // mesmo estagio a cada fechamento de vela pra nao inundar a tela).
   useEffect(() => {
     const last = events[0];
     if (!last || last.type !== 'WATCHLIST_SIGNAL' || last.activeId === undefined) return;
-    const payload = last.payload as unknown as WatchlistEntry & { direction: Direction | null };
+    const payload = last.payload as unknown as WatchlistEntry & { progress: StrategyProgress | null };
     const key = `${payload.activeId}:${payload.strategyId}`;
-    setWatchlistSignals((prev) => {
+    setWatchlistProgress((prev) => {
       const next = { ...prev };
-      if (payload.direction) {
-        next[key] = { ...payload, direction: payload.direction };
+      if (payload.progress) {
+        next[key] = {
+          activeId: payload.activeId,
+          assetName: payload.assetName,
+          strategyId: payload.strategyId,
+          strategyName: payload.strategyName,
+          progress: payload.progress,
+        };
       } else {
         delete next[key];
       }
@@ -585,6 +608,13 @@ export function ChartPage() {
   }
 
   const currentResult = resultIndex !== null ? resultMarkers[resultIndex] : undefined;
+
+  // Lista de progresso ordenada: prontas pra entrar primeiro, depois por o quao perto estao
+  // (stage/totalStages) — exatamente a ordem que ajuda a decidir "em qual eu entro agora".
+  const sortedWatchlist = Object.entries(watchlistProgress).sort(([, a], [, b]) => {
+    if (a.progress.readyNow !== b.progress.readyNow) return a.progress.readyNow ? -1 : 1;
+    return b.progress.stage / b.progress.totalStages - a.progress.stage / a.progress.totalStages;
+  });
 
   return (
     <div className="flex flex-col">
@@ -1016,36 +1046,50 @@ export function ChartPage() {
         </div>
       </div>
 
-      {/* Estrategias do ranking se formando AGORA — abaixo do grafico, nao em cima (pra nao
-          empurrar o grafico pra baixo toda hora que um sinal aparece/some). Clicar troca o
-          grafico direto pro ativo+estrategia daquele aviso. */}
-      {Object.keys(watchlistSignals).length > 0 && (
-        <div className="px-3 sm:px-6 py-3 border-t border-slate-800 bg-slate-950">
-          <div className="text-xs font-semibold text-slate-400 mb-2">🔔 Formando agora (ranking)</div>
-          <div className="flex flex-col gap-1.5">
-            {Object.entries(watchlistSignals).map(([key, sig]) => (
+      {/* Progresso ao vivo das ate 20 estrategias do ranking — abaixo do grafico, SEMPRE
+          visivel (mesmo vazia), pra nao parecer que nada esta acontecendo enquanto o usuario
+          espera. Ordenada da mais perto de confirmar pra mais longe; a que acabou de confirmar
+          (pronta pra entrar na proxima vela) fica em destaque no topo. Clicar troca o grafico
+          direto pro ativo+estrategia daquela linha. */}
+      <div className="px-3 sm:px-6 py-3 border-t border-slate-800 bg-slate-950">
+        <div className="text-xs font-semibold text-slate-400 mb-2">🔔 Estratégias do ranking se formando ao vivo</div>
+        {sortedWatchlist.length === 0 ? (
+          <div className="text-xs text-slate-600 py-2">
+            Nenhuma em formação no momento — vigiando os {scanRanking.length || 0} ativos do ranking em segundo plano.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+            {sortedWatchlist.map(([key, item]) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => {
-                  setStrategyMode(sig.strategyId);
-                  loadChartFor(sig.activeId, sig.strategyId, SCAN_DAYS);
+                  setStrategyMode(item.strategyId);
+                  loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
                 }}
-                className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm font-semibold text-left animate-pulse ${
-                  sig.direction === 'CALL'
-                    ? 'bg-emerald-600/15 border-emerald-700 text-emerald-300 hover:bg-emerald-600/25'
-                    : 'bg-rose-600/15 border-rose-700 text-rose-300 hover:bg-rose-600/25'
+                className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
+                  item.progress.readyNow
+                    ? `font-bold animate-pulse ${
+                        item.progress.direction === 'CALL'
+                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                          : 'bg-rose-600/20 border-rose-500 text-rose-300'
+                      }`
+                    : 'border-slate-700 text-slate-300 hover:bg-slate-900'
                 }`}
               >
-                <span>
-                  {sig.assetName} <span className="text-slate-400 font-normal">· {sig.strategyName}</span>
+                <span className="truncate">
+                  {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
                 </span>
-                <span>{sig.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}</span>
+                <span className="shrink-0 whitespace-nowrap">
+                  {item.progress.readyNow
+                    ? `Entrar na próxima vela ${item.progress.direction === 'CALL' ? '⬆' : '⬇'}`
+                    : `${item.progress.stage}ª confirmação de ${item.progress.totalStages}`}
+                </span>
               </button>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
