@@ -40,9 +40,19 @@ interface WatchlistItem {
    * segundos em vez de so sumir, ja que o usuario podia estar prestes a clicar. Progresso
    * parcial que se desfaz ANTES de ficar pronto nao usa isso — some direto, sem rastro. */
   cancelledAt?: number;
+  /** epoch ms de quando este progresso (este payload exato) chegou do servidor — trava de
+   * seguranca contra "falso positivo": se um item ficar marcado como pronto pra entrar por mais
+   * tempo do que uma vela M1 deveria durar sem nenhuma atualizacao nova chegando, ele e tratado
+   * como obsoleto e some da lista (ver sortedWatchlist) em vez de continuar piscando "Entrada em
+   * Ns" indefinidamente — o contador em si e so relogio de parede, nao prova que o sinal ainda
+   * vale. */
+  receivedAt: number;
 }
 
 const WATCHLIST_CANCEL_GRACE_MS = 8000;
+// Uma vela M1 dura 60s — da folga de mais uma vela inteira (mais a folga de indexacao do
+// servidor) antes de considerar um aviso "pronto pra entrar" obsoleto sem atualizacao nova.
+const WATCHLIST_READY_STALE_MS = 130_000;
 
 /** 'auto' = deixa o app escolher a melhor entre todas; os demais sao escolha manual do usuario. */
 type StrategyMode = 'auto' | 'pattern' | ClassicStrategyId;
@@ -384,12 +394,12 @@ export function ChartPage() {
         const stillReady = payload.progress.readyNow;
         next[key] =
           wasReady && !stillReady
-            ? { ...base, progress: payload.progress, cancelledAt: Date.now() } // estava pronta, caiu pra parcial de novo — avisa
-            : { ...base, progress: payload.progress };
+            ? { ...base, progress: payload.progress, cancelledAt: Date.now(), receivedAt: Date.now() } // estava pronta, caiu pra parcial de novo — avisa
+            : { ...base, progress: payload.progress, receivedAt: Date.now() };
       } else if (wasReady) {
         // Estava pronta pra entrar e a vela de confirmacao NAO se sustentou — avisa "Nao entre"
         // por um tempo em vez de so sumir (o usuario podia estar prestes a clicar).
-        next[key] = { ...base, progress: prevItem!.progress, cancelledAt: Date.now() };
+        next[key] = { ...base, progress: prevItem!.progress, cancelledAt: Date.now(), receivedAt: Date.now() };
       } else {
         // Progresso parcial que nunca chegou a ficar pronto, e se desfez — some sem deixar rastro.
         delete next[key];
@@ -672,6 +682,11 @@ export function ChartPage() {
   // Avisos de cancelamento ("Nao entre") somem sozinhos depois de um tempo de exibicao.
   const sortedWatchlist = Object.entries(watchlistProgress)
     .filter(([, item]) => item.cancelledAt === undefined || now.getTime() - item.cancelledAt < WATCHLIST_CANCEL_GRACE_MS)
+    // Trava contra falso positivo: um aviso "pronta pra entrar" sem NENHUMA atualizacao nova ha
+    // mais tempo do que uma vela M1 deveria durar e tratado como obsoleto e escondido, mesmo que
+    // nenhum evento de cancelamento tenha chegado do servidor pra limpa-lo — o contador exibido
+    // ao lado e so relogio de parede, entao sozinho ele NAO prova que o sinal ainda vale.
+    .filter(([, item]) => !item.progress.readyNow || now.getTime() - item.receivedAt < WATCHLIST_READY_STALE_MS)
     .sort(([, a], [, b]) => {
       if (a.progress.readyNow !== b.progress.readyNow) return a.progress.readyNow ? -1 : 1;
       return b.progress.stage / b.progress.totalStages - a.progress.stage / a.progress.totalStages;

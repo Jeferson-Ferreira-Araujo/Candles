@@ -29,6 +29,17 @@ const CANDLE_CLOSE_SETTLE_DELAY_MS = 2000;
 
 function sameProgress(a: StrategyProgress | null, b: StrategyProgress | null): boolean {
   if (a === null || b === null) return a === b;
+  // setupCandleTimes PRECISA entrar na comparacao: uma estrategia pode continuar "pronta" (mesmo
+  // stage/totalStages/direction) minuto apos minuto enquanto o preco segue na mesma direcao, mas
+  // cada minuto e um setup DIFERENTE (velas diferentes contadas). Sem comparar os horarios, o
+  // evento nunca era reemitido (nada "mudava" aos olhos do sameProgress antigo) e o cliente ficava
+  // preso exibindo o aviso de "pronta pra entrar" da PRIMEIRA vez pra sempre — so o contador
+  // regressivo (que e so relogio de parede, sem relacao com o servidor) continuava parecendo
+  // "vivo", dando a falsa impressao de um sinal novo mesmo depois de ja ter sido usado.
+  if (a.setupCandleTimes.length !== b.setupCandleTimes.length) return false;
+  for (let i = 0; i < a.setupCandleTimes.length; i++) {
+    if (a.setupCandleTimes[i] !== b.setupCandleTimes[i]) return false;
+  }
   return a.stage === b.stage && a.totalStages === b.totalStages && a.readyNow === b.readyNow && a.direction === b.direction;
 }
 
