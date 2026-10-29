@@ -616,11 +616,18 @@ export interface StrategyProgress {
   stage: number;
   /** Quantas confirmacoes o setup inteiro precisa antes da entrada. */
   totalStages: number;
-  /** So conhecida quando o setup de fato completa (stage === totalStages) — null enquanto so
-   * parcialmente formado, pra nao sugerir uma direcao que ainda pode nao se confirmar. */
+  /** Direcao provavel — ja conhecida enquanto parcial pras familias onde a cor/lado das velas
+   * ja em pe determina a direcao (ex.: 3 Candles de Impulso, Dupla Rejeicao), e so quando
+   * readyNow=true pras que so decidem a direcao na propria vela de rompimento (Compressao,
+   * Inside Bar) — nesses casos fica null ate la, pra nao sugerir um lado que pode nao se confirmar. */
   direction: Direction | null;
   /** true = a proxima vela (que vai comecar agora) e a entrada — equivalente a `detectPendingSignal`. */
   readyNow: boolean;
+  /** epoch seconds (`candle.from`) de cada vela que faz parte do setup ja em pe ate agora — pra
+   * marcar EXATAMENTE essas velas no grafico (ver CandleChart). Vazio pras estrategias sem
+   * nocao de "quantidade de velas" enquanto nao prontas (ai so se sabe a vela de sinal quando
+   * readyNow vira true). */
+  setupCandleTimes: number[];
 }
 
 /**
@@ -632,7 +639,10 @@ export interface StrategyProgress {
  * Resistencia, numa combinacao de indicadores) — pra essas, null aqui significa "sem estagio
  * parcial", e o chamador (detectStrategyProgress) usa so o binario de detectPendingSignal.
  */
-function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfig): { stage: number; totalStages: number } | null {
+function detectPartialProgress(
+  candles: Candle[],
+  strategy: ClassicStrategyConfig
+): { stage: number; totalStages: number; setupCandleTimes: number[]; direction: Direction | null } | null {
   if (candles.length === 0) return null;
   const last = candles[candles.length - 1]!;
 
@@ -642,23 +652,25 @@ function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfi
       const totalStages = p.sequenceLength + 1;
       const lastColor = candleColor(last);
       if (lastColor === 'DOJI') return null;
-      let run = 1;
-      for (let i = candles.length - 2; i >= 0 && run < p.sequenceLength; i--) {
-        if (candleColor(candles[i]!) === lastColor) run++;
+      const run: Candle[] = [last];
+      for (let i = candles.length - 2; i >= 0 && run.length < p.sequenceLength; i--) {
+        if (candleColor(candles[i]!) === lastColor) run.unshift(candles[i]!);
         else break;
       }
-      return { stage: run, totalStages };
+      // A reversao (e a entrada) vai na direcao OPOSTA a cor da sequencia em formacao.
+      const direction: Direction = lastColor === 'G' ? 'PUT' : 'CALL';
+      return { stage: run.length, totalStages, setupCandleTimes: run.map((c) => c.from), direction };
     }
 
     case 'three_soldiers': {
       const totalStages = 3;
-      let stage = 0;
+      const run: Candle[] = [];
       let prevClose: number | null = null;
       let runColor: 'G' | 'R' | null = null;
       // Anda de tras pra frente contando quantas velas recentes, em sequencia, ja cumprem
       // sozinhas o padrao (cor + corpo forte + pavio oposto pequeno) E progridem na mesma
       // direcao da vela seguinte (mais recente) — para no primeiro candle que quebra alguma regra.
-      for (let i = candles.length - 1; i >= 0 && stage < totalStages; i--) {
+      for (let i = candles.length - 1; i >= 0 && run.length < totalStages; i--) {
         const c = candles[i]!;
         const color = candleColor(c);
         if (color === 'DOJI') break;
@@ -675,9 +687,12 @@ function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfi
           if (!progressing) break;
         }
         prevClose = c.close;
-        stage++;
+        run.unshift(c);
       }
-      return stage > 0 ? { stage, totalStages } : null;
+      if (run.length === 0) return null;
+      // A cor do trio JA E a direcao da entrada (continuacao do movimento).
+      const direction: Direction = runColor === 'G' ? 'CALL' : 'PUT';
+      return { stage: run.length, totalStages, setupCandleTimes: run.map((c) => c.from), direction };
     }
 
     case 'compression_breakout': {
@@ -687,22 +702,24 @@ function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfi
       const lookback = candles.slice(candles.length - 1 - p.compressionLength - p.medianLookback, candles.length - 1 - p.compressionLength);
       const medianRange = median(lookback.map(candleRange));
       if (medianRange === 0) return null;
-      let stage = 0;
-      for (let i = candles.length - 1; i >= 0 && stage < p.compressionLength; i--) {
-        if (candleRange(candles[i]!) <= medianRange * p.maxCompressionRangeRatio) stage++;
+      const run: Candle[] = [];
+      for (let i = candles.length - 1; i >= 0 && run.length < p.compressionLength; i--) {
+        if (candleRange(candles[i]!) <= medianRange * p.maxCompressionRangeRatio) run.unshift(candles[i]!);
         else break;
       }
-      return stage > 0 ? { stage, totalStages } : null;
+      // Direcao so se sabe quando a vela de rompimento aparecer — pode ir pra qualquer lado.
+      return run.length > 0 ? { stage: run.length, totalStages, setupCandleTimes: run.map((c) => c.from), direction: null } : null;
     }
 
     case 'inside_bar_breakout': {
       // 2 estagios: 1) ja existe pelo menos 1 inside bar dentro do range de uma vela-mae
-      // recente; 2) a vela atual rompe esse range (pronta — ver detectPendingSignal).
+      // recente; 2) a vela atual rompe esse range (pronta — ver detectPendingSignal). Direcao
+      // so se sabe no rompimento — pode ir pra qualquer lado.
       if (candles.length < 2) return null;
       const mother = candles[candles.length - 2]!;
       const current = candles[candles.length - 1]!;
       const isInsideSoFar = current.high < mother.high && current.low > mother.low;
-      return isInsideSoFar ? { stage: 1, totalStages: 2 } : null;
+      return isInsideSoFar ? { stage: 1, totalStages: 2, setupCandleTimes: [mother.from, current.from], direction: null } : null;
     }
 
     case 'double_rejection': {
@@ -716,11 +733,12 @@ function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfi
         const first = candles[k]!;
         const firstLowerWick = lowerWickPercentage(first);
         const firstUpperWick = upperWickPercentage(first);
-        if (
-          (firstLowerWick !== null && firstLowerWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT) ||
-          (firstUpperWick !== null && firstUpperWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT)
-        ) {
-          return { stage: 1, totalStages: 2 }; // ja ha uma 1a rejeicao valida esperando a 2a testar o mesmo nivel
+        // Rejeicao no FUNDO (pavio inferior) = suporte = CALL; rejeicao no TOPO = resistencia = PUT.
+        if (firstLowerWick !== null && firstLowerWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT) {
+          return { stage: 1, totalStages: 2, setupCandleTimes: [first.from], direction: 'CALL' };
+        }
+        if (firstUpperWick !== null && firstUpperWick >= DOUBLE_REJECTION_MIN_WICK_PERCENT) {
+          return { stage: 1, totalStages: 2, setupCandleTimes: [first.from], direction: 'PUT' };
         }
       }
       return null;
@@ -739,7 +757,10 @@ function detectPartialProgress(candles: Candle[], strategy: ClassicStrategyConfi
       const impulseColor = candleColor(impulse);
       if (impulseColor === 'DOJI') return null;
       if (candleRange(impulse) < medianRange * minMultiplier) return null;
-      return { stage: 1, totalStages: 2 }; // impulso acabou de fechar — falta so o pullback confirmar
+      // impulso acabou de fechar — falta so o pullback confirmar. A direcao da entrada segue a
+      // cor do impulso (continuacao apos a correcao).
+      const direction: Direction = impulseColor === 'G' ? 'CALL' : 'PUT';
+      return { stage: 1, totalStages: 2, setupCandleTimes: [impulse.from], direction };
     }
 
     // Engolfo, Pin Bar, Falso Rompimento e Suporte/Resistencia nao tem "quantidade de velas"
@@ -764,10 +785,24 @@ export function detectStrategyProgress(closedCandles: Candle[], strategy: Classi
 
   if (ready) {
     const totalStages = partial?.totalStages ?? 1;
-    return { stage: totalStages, totalStages, direction: ready.direction, readyNow: true };
+    // Suporte/Resistencia e Falso Rompimento guardam no setupWindow uma janela de CONTEXTO
+    // (ate 6 velas pra tras), nao uma sequencia de confirmacoes — marcar todas numeradas
+    // sugeriria "6 confirmacoes" quando na verdade so a ultima vela (o toque/pavio de
+    // rejeicao) e o que importa pra decisao.
+    const setupCandleTimes =
+      strategy.id === 'support_resistance' || strategy.id === 'fakeout'
+        ? [ready.setupWindow[ready.setupWindow.length - 1]!.from]
+        : ready.setupWindow.map((c) => c.from);
+    return { stage: totalStages, totalStages, direction: ready.direction, readyNow: true, setupCandleTimes };
   }
   if (partial) {
-    return { stage: partial.stage, totalStages: partial.totalStages, direction: null, readyNow: false };
+    return {
+      stage: partial.stage,
+      totalStages: partial.totalStages,
+      direction: partial.direction,
+      readyNow: false,
+      setupCandleTimes: partial.setupCandleTimes,
+    };
   }
   return null;
 }
@@ -784,7 +819,7 @@ export function detectStrategyProgress(closedCandles: Candle[], strategy: Classi
 export function detectPendingSignal(
   closedCandles: Candle[],
   strategy: ClassicStrategyConfig
-): { direction: Direction; signalMetricValue: number } | null {
+): { direction: Direction; signalMetricValue: number; setupWindow: Candle[] } | null {
   if (closedCandles.length === 0) return null;
   const last = closedCandles[closedCandles.length - 1]!;
   const dummy: Candle = { ...last, from: last.to, to: last.to + (last.to - last.from), isClosed: false };
@@ -793,7 +828,7 @@ export function detectPendingSignal(
   const signals = detectSignals(withDummy, strategy);
   const pending = signals.find((s) => s.entryIndex === closedCandles.length);
   if (!pending) return null;
-  return { direction: pending.direction, signalMetricValue: pending.signalMetricValue };
+  return { direction: pending.direction, signalMetricValue: pending.signalMetricValue, setupWindow: pending.setupWindow };
 }
 
 /** Inicio (epoch seconds, UTC) do dia de calendario de hoje — "dia" no seletor "Dias" da tela

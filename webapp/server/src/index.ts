@@ -32,6 +32,7 @@ import {
   runClassicStrategy,
   runAllClassicStrategiesForAsset,
   detectPendingSignal,
+  detectStrategyProgress,
   fetchClosedCandles,
   computeClassicStrategyResult,
   getCurrentSupportResistanceLevels,
@@ -274,9 +275,10 @@ app.post('/api/classic-strategy', async (req, res) => {
   }
 });
 
-// Verifica se o setup da estrategia acabou de se completar na ultima vela fechada — ou seja,
-// se a vela ainda se formando AGORA ja e a entrada (compra/venda). So pra estrategias
-// classicas por enquanto (o padrao customizado ja tem sinalizacao ao vivo propria via
+// Progresso do setup da estrategia (quantas confirmacoes ja estao em pe + quais velas, ver
+// detectStrategyProgress) pro ativo/estrategia ABERTO no grafico agora — usado pra marcar no
+// proprio grafico quais velas estao sendo contadas na analise. So pra estrategias classicas
+// por enquanto (o padrao customizado ja tem sinalizacao ao vivo propria via
 // LiveMonitorService/PATTERN_CONFIRMED, quando o ativo esta entre os monitorados).
 app.post('/api/classic-strategy/pending', async (req, res) => {
   const { activeId, days, strategyId } = req.body as { activeId?: number; days?: number; strategyId?: ClassicStrategyId };
@@ -295,8 +297,8 @@ app.post('/api/classic-strategy/pending', async (req, res) => {
       .filter((c) => c.isClosed)
       .sort((a, b) => a.from - b.from);
     const strategy = defaultClassicStrategyConfig(strategyId);
-    const pending = detectPendingSignal(candles, strategy);
-    res.json({ pending });
+    const progress = detectStrategyProgress(candles, strategy);
+    res.json({ progress });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

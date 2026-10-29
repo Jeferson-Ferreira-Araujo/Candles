@@ -200,12 +200,16 @@ export const api = {
       body: JSON.stringify({ activeId, days }),
     }).then((r) => json<{ support: { price: number; touches: number }[]; resistance: { price: number; touches: number }[] }>(r)),
 
-  getPendingSignal: (activeId: number, days: number, strategyId: ClassicStrategyId) =>
+  getStrategyProgress: (activeId: number, days: number, strategyId: ClassicStrategyId) =>
     req('/api/classic-strategy/pending', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activeId, days, strategyId }),
-    }).then((r) => json<{ pending: { direction: 'CALL' | 'PUT'; signalMetricValue: number } | null }>(r)),
+    }).then((r) =>
+      json<{
+        progress: { stage: number; totalStages: number; direction: 'CALL' | 'PUT' | null; readyNow: boolean; setupCandleTimes: number[] } | null;
+      }>(r)
+    ),
 
   getEvents: (limit = 200) => req(`/api/events?limit=${limit}`).then((r) => json<import('@polarium12c/shared').AppEvent[]>(r)),
 

@@ -25,13 +25,31 @@ describe('detectStrategyProgress — three_soldiers', () => {
     expect(detectStrategyProgress(candles, strategy)).toBeNull();
 
     push(10, 102, 10, 100); // 1a vela do trio
-    expect(detectStrategyProgress(candles, strategy)).toEqual({ stage: 1, totalStages: 3, direction: null, readyNow: false });
+    expect(detectStrategyProgress(candles, strategy)).toEqual({
+      stage: 1,
+      totalStages: 3,
+      direction: 'CALL', // a cor do trio ja indica a direcao, mesmo so com 1 vela em pe
+      readyNow: false,
+      setupCandleTimes: [BASE],
+    });
 
     push(100, 152, 100, 150); // 2a, fecha mais alto
-    expect(detectStrategyProgress(candles, strategy)).toEqual({ stage: 2, totalStages: 3, direction: null, readyNow: false });
+    expect(detectStrategyProgress(candles, strategy)).toEqual({
+      stage: 2,
+      totalStages: 3,
+      direction: 'CALL',
+      readyNow: false,
+      setupCandleTimes: [BASE, BASE + SIZE],
+    });
 
     push(150, 202, 150, 200); // 3a, fecha mais alto ainda -> pronta
-    expect(detectStrategyProgress(candles, strategy)).toEqual({ stage: 3, totalStages: 3, direction: 'CALL', readyNow: true });
+    expect(detectStrategyProgress(candles, strategy)).toEqual({
+      stage: 3,
+      totalStages: 3,
+      direction: 'CALL',
+      readyNow: true,
+      setupCandleTimes: [BASE, BASE + SIZE, BASE + SIZE * 2],
+    });
   });
 
   it('nao acusa nada quando nenhuma vela do padrao comecou', () => {

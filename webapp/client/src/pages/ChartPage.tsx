@@ -35,7 +35,14 @@ interface WatchlistItem {
   strategyId: ClassicStrategyId;
   strategyName: string;
   progress: StrategyProgress;
+  /** epoch ms — so preenchido quando a entrada ESTAVA pronta (readyNow) e deixou de estar no
+   * ultimo instante (a vela de confirmacao nao se sustentou). Mostra "Nao entre" por uns
+   * segundos em vez de so sumir, ja que o usuario podia estar prestes a clicar. Progresso
+   * parcial que se desfaz ANTES de ficar pronto nao usa isso — some direto, sem rastro. */
+  cancelledAt?: number;
 }
+
+const WATCHLIST_CANCEL_GRACE_MS = 8000;
 
 /** 'auto' = deixa o app escolher a melhor entre todas; os demais sao escolha manual do usuario. */
 type StrategyMode = 'auto' | 'pattern' | ClassicStrategyId;
@@ -112,6 +119,10 @@ export function ChartPage() {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null);
   const [best, setBest] = useState<BestStrategyResult | null | 'loading'>(null);
   const [pendingSignal, setPendingSignal] = useState<Direction | null>(null);
+  // epoch seconds (candle.from) de cada vela que ja esta sendo contada no setup da estrategia
+  // ABERTA no grafico agora (parcial OU pronto) — pra marcar EXATAMENTE essas velas, nao so
+  // avisar com um numero (ver detectStrategyProgress no servidor).
+  const [chartSetupCandleTimes, setChartSetupCandleTimes] = useState<number[]>([]);
   const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
   const [scanInfo, setScanInfo] = useState<{ assetsScanned: number; tookMs: number; bestAssetName?: string } | null>(null);
   const [scanRanking, setScanRanking] = useState<AssetScanRanking[]>([]);
@@ -142,18 +153,22 @@ export function ChartPage() {
   const scanStartedRef = useRef(false);
   const chartRef = useRef<CandleChartHandle>(null);
 
-  // So da pra checar sinal pendente pra estrategias classicas (o padrao customizado tem seu
-  // proprio aviso ao vivo via LiveMonitorService, quando esta entre os ativos monitorados).
+  // So da pra checar progresso pra estrategias classicas (o padrao customizado tem seu proprio
+  // aviso ao vivo via LiveMonitorService, quando esta entre os ativos monitorados). Busca o
+  // progresso INTEIRO (nao so "pronto ou nao") pra poder marcar no grafico quais velas estao
+  // sendo contadas na analise agora, parcial ou pronta.
   const checkPendingSignal = useCallback(async (bestOverride?: BestStrategyResult | null, assetIdOverride?: number) => {
     const b = bestOverride !== undefined ? bestOverride : bestRef.current;
     const assetId = assetIdOverride ?? watchingAssetIdRef.current;
     if (!b || b === 'loading' || b.kind !== 'classic' || !b.strategyId || assetId === null) {
       setPendingSignal(null);
+      setChartSetupCandleTimes([]);
       return;
     }
     try {
-      const { pending } = await api.getPendingSignal(assetId, daysRef.current, b.strategyId);
-      setPendingSignal(pending?.direction ?? null);
+      const { progress } = await api.getStrategyProgress(assetId, daysRef.current, b.strategyId);
+      setPendingSignal(progress?.readyNow ? progress.direction : null);
+      setChartSetupCandleTimes(progress?.setupCandleTimes ?? []);
     } catch {
       // falha ao checar nao deve derrubar a tela — so nao mostra aviso dessa vez
     }
@@ -168,6 +183,7 @@ export function ChartPage() {
     setBest('loading');
     setLiveCandle(null);
     setPendingSignal(null);
+    setChartSetupCandleTimes([]);
     setActiveOrders([]);
     setSrLevels([]);
     try {
@@ -211,6 +227,7 @@ export function ChartPage() {
     if (assetId === null) return;
     setBest('loading');
     setPendingSignal(null);
+    setChartSetupCandleTimes([]);
     try {
       const result = await resolveStrategy(assetId, daysRef.current, mode);
       setBest(result);
@@ -352,15 +369,29 @@ export function ChartPage() {
     const key = `${payload.activeId}:${payload.strategyId}`;
     setWatchlistProgress((prev) => {
       const next = { ...prev };
+      const prevItem = prev[key];
+      // So considera "estava pronta" se realmente estava — nao conta um aviso de cancelamento
+      // ja em exibicao como "pronta" de novo.
+      const wasReady = prevItem !== undefined && prevItem.progress.readyNow && prevItem.cancelledAt === undefined;
+      const base = {
+        activeId: payload.activeId,
+        assetName: payload.assetName,
+        strategyId: payload.strategyId,
+        strategyName: payload.strategyName,
+      };
+
       if (payload.progress) {
-        next[key] = {
-          activeId: payload.activeId,
-          assetName: payload.assetName,
-          strategyId: payload.strategyId,
-          strategyName: payload.strategyName,
-          progress: payload.progress,
-        };
+        const stillReady = payload.progress.readyNow;
+        next[key] =
+          wasReady && !stillReady
+            ? { ...base, progress: payload.progress, cancelledAt: Date.now() } // estava pronta, caiu pra parcial de novo — avisa
+            : { ...base, progress: payload.progress };
+      } else if (wasReady) {
+        // Estava pronta pra entrar e a vela de confirmacao NAO se sustentou — avisa "Nao entre"
+        // por um tempo em vez de so sumir (o usuario podia estar prestes a clicar).
+        next[key] = { ...base, progress: prevItem!.progress, cancelledAt: Date.now() };
       } else {
+        // Progresso parcial que nunca chegou a ficar pronto, e se desfez — some sem deixar rastro.
         delete next[key];
       }
       return next;
@@ -529,6 +560,12 @@ export function ChartPage() {
       text: 'ENTRADA',
     });
   }
+  // Marca EXATAMENTE quais velas ja fechadas estao sendo contadas na analise da estrategia
+  // aberta agora (parcial ou pronta) — numeradas na ordem (1a, 2a...), pra responder "quais
+  // velas estao sendo contadas nessa analise".
+  chartSetupCandleTimes.forEach((time, idx) => {
+    markers.push({ time, position: 'belowBar', color: '#38bdf8', shape: 'circle', text: `${idx + 1}ª` });
+  });
   // Cada entrada manual resolvida marca a sua PROPRIA vela de entrada (M1 = 60s antes da
   // expiracao) com o resultado e o valor — 2+ entradas simultaneas geram 2+ marcadores.
   for (const order of activeOrders) {
@@ -609,12 +646,20 @@ export function ChartPage() {
 
   const currentResult = resultIndex !== null ? resultMarkers[resultIndex] : undefined;
 
+  // Quantos segundos faltam pro minuto atual fechar — a entrada de uma estrategia "pronta"
+  // (readyNow) precisa acontecer ANTES disso, ja que e a vela que esta se formando AGORA que
+  // serve de entrada. Mesma conta usada pelo acompanhamento de ordem aberta mais abaixo.
+  const secondsToMinuteClose = 60 - (Math.floor(now.getTime() / 1000) % 60);
+
   // Lista de progresso ordenada: prontas pra entrar primeiro, depois por o quao perto estao
   // (stage/totalStages) — exatamente a ordem que ajuda a decidir "em qual eu entro agora".
-  const sortedWatchlist = Object.entries(watchlistProgress).sort(([, a], [, b]) => {
-    if (a.progress.readyNow !== b.progress.readyNow) return a.progress.readyNow ? -1 : 1;
-    return b.progress.stage / b.progress.totalStages - a.progress.stage / a.progress.totalStages;
-  });
+  // Avisos de cancelamento ("Nao entre") somem sozinhos depois de um tempo de exibicao.
+  const sortedWatchlist = Object.entries(watchlistProgress)
+    .filter(([, item]) => item.cancelledAt === undefined || now.getTime() - item.cancelledAt < WATCHLIST_CANCEL_GRACE_MS)
+    .sort(([, a], [, b]) => {
+      if (a.progress.readyNow !== b.progress.readyNow) return a.progress.readyNow ? -1 : 1;
+      return b.progress.stage / b.progress.totalStages - a.progress.stage / a.progress.totalStages;
+    });
 
   return (
     <div className="flex flex-col">
@@ -1059,34 +1104,46 @@ export function ChartPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-            {sortedWatchlist.map(([key, item]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => {
-                  setStrategyMode(item.strategyId);
-                  loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
-                }}
-                className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
-                  item.progress.readyNow
-                    ? `font-bold animate-pulse ${
-                        item.progress.direction === 'CALL'
-                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                          : 'bg-rose-600/20 border-rose-500 text-rose-300'
-                      }`
-                    : 'border-slate-700 text-slate-300 hover:bg-slate-900'
-                }`}
-              >
-                <span className="truncate">
-                  {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
-                </span>
-                <span className="shrink-0 whitespace-nowrap">
-                  {item.progress.readyNow
-                    ? `Entrar na próxima vela ${item.progress.direction === 'CALL' ? '⬆' : '⬇'}`
-                    : `${item.progress.stage}ª confirmação de ${item.progress.totalStages}`}
-                </span>
-              </button>
-            ))}
+            {sortedWatchlist.map(([key, item]) => {
+              const isCancelled = item.cancelledAt !== undefined;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setStrategyMode(item.strategyId);
+                    loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
+                  }}
+                  className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
+                    isCancelled
+                      ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
+                      : item.progress.readyNow
+                        ? `font-bold animate-pulse ${
+                            item.progress.direction === 'CALL'
+                              ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                              : 'bg-rose-600/20 border-rose-500 text-rose-300'
+                          }`
+                        : 'border-slate-700 text-slate-300 hover:bg-slate-900'
+                  }`}
+                >
+                  <span className="truncate">
+                    {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
+                    {!isCancelled && item.progress.direction && (
+                      <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {item.progress.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 whitespace-nowrap">
+                    {isCancelled
+                      ? '❌ Não entre'
+                      : item.progress.readyNow
+                        ? `Entrada em ${secondsToMinuteClose}s`
+                        : `${item.progress.stage}ª confirmação de ${item.progress.totalStages}`}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
