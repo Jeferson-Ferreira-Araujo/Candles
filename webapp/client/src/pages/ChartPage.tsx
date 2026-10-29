@@ -29,12 +29,23 @@ interface StrategyProgress {
   readyNow: boolean;
 }
 
+/** Placar historico (do dia, mesmo periodo da ultima varredura) desse par ativo+estrategia —
+ * "quantos WIN/LOSS essa estrategia ja teve hoje nesse ativo", pra contextualizar o sinal ao
+ * vivo com o desempenho recente, nao so a taxa de acerto generica do ranking. */
+interface WatchlistStats {
+  wins: number;
+  losses: number;
+}
+
 interface WatchlistItem {
   activeId: number;
   assetName: string;
   strategyId: ClassicStrategyId;
   strategyName: string;
   progress: StrategyProgress;
+  /** vem do ranking da ultima varredura (ver updateWatchlistFromRanking) — undefined so se o
+   * par chegou de algum jeito fora dessa varredura (nao deveria acontecer hoje). */
+  stats?: WatchlistStats;
   /** epoch ms — so preenchido quando a entrada ESTAVA pronta (readyNow) e deixou de estar no
    * ultimo instante (a vela de confirmacao nao se sustentou). Mostra "Nao entre" por uns
    * segundos em vez de so sumir, ja que o usuario podia estar prestes a clicar. Progresso
@@ -157,6 +168,10 @@ export function ChartPage() {
   // estrategias, entao o mesmo ativo pode ter mais de um aviso ativo ao mesmo tempo (uma
   // estrategia diferente cada), nao so um por ativo como antes (so top 3).
   const [watchlistProgress, setWatchlistProgress] = useState<Record<string, WatchlistItem>>({});
+  // Placar wins/losses do dia por par ativo+estrategia, da ULTIMA varredura (ver
+  // updateWatchlistFromRanking) — ref (nao state) porque so e LIDO dentro do handler de
+  // WATCHLIST_SIGNAL (que roda a cada evento, nao precisa re-renderizar so por isso mudar).
+  const watchlistStatsRef = useRef<Record<string, WatchlistStats>>({});
   const { events, lastCandleUpdate } = useLiveSocket();
   const { refreshHeader } = useOutletContext<{ events: AppEvent[]; settings: Settings | null; refreshHeader: () => Promise<void> }>();
   const watchingAssetIdRef = useRef<number | null>(null);
@@ -277,12 +292,20 @@ export function ChartPage() {
   // comeca a se formar de novo, mesmo com o usuario olhando outro ativo no grafico. Dedup por
   // ativo+estrategia (o ranking ja vem sem repetir).
   function updateWatchlistFromRanking(top: AssetScanRanking[]) {
-    const entries: WatchlistEntry[] = top.slice(0, 20).map((row) => ({
+    const slice = top.slice(0, 20);
+    const entries: WatchlistEntry[] = slice.map((row) => ({
       activeId: row.activeId,
       assetName: row.assetName,
       strategyId: row.strategyId,
       strategyName: row.strategyName,
     }));
+    // Guarda o placar wins/losses de hoje de cada par — usado pra anotar cada linha da lista ao
+    // vivo com "quantos WIN/LOSS essa estrategia ja teve hoje nesse ativo" (ver WATCHLIST_SIGNAL).
+    const stats: Record<string, WatchlistStats> = {};
+    for (const row of slice) {
+      stats[`${row.activeId}:${row.strategyId}`] = { wins: row.wins, losses: row.losses };
+    }
+    watchlistStatsRef.current = stats;
     setWatchlistProgress({});
     api.setWatchlist(entries).catch(() => {});
   }
@@ -407,6 +430,7 @@ export function ChartPage() {
         assetName: payload.assetName,
         strategyId: payload.strategyId,
         strategyName: payload.strategyName,
+        stats: watchlistStatsRef.current[key],
       };
 
       if (payload.progress) {
@@ -1233,6 +1257,11 @@ export function ChartPage() {
                     <span className="truncate">
                       {isActiveChartRow && <span className="mr-1.5 text-sky-400" title="Grafico aberto na tela">📍</span>}
                       {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
+                      {item.stats && (
+                        <span className="ml-2 text-slate-500 font-normal" title="Placar dessa estrategia nesse ativo hoje">
+                          ({item.stats.wins}W {item.stats.losses}L hoje)
+                        </span>
+                      )}
                       {!isCancelled && item.progress.direction && (
                         <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {item.progress.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
