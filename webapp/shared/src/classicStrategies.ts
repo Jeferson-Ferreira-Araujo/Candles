@@ -149,9 +149,13 @@ export interface ClassicStrategyInfo {
 // Engolfo, Pin Bar e Falso Rompimento ficam FORA desta lista por pedido explicito: sao
 // estrategias de "uma vela so" (o padrao bate ou nao bate numa unica vela, sem sequencia de
 // confirmacoes pra acompanhar) — o usuario quer so estrategias com confirmacao em varias
-// etapas/cenarios comprovaveis. Os detectores continuam existindo em classicStrategies.ts (server)
-// e os tipos/params aqui (reversivel, nao apagado), so nao aparecem mais no seletor nem entram em
-// nenhuma varredura ("Verificar"), scan-strategy ou vigilancia — tudo deriva desta lista.
+// etapas/cenarios comprovaveis. As duas familias de Pullback (impulse_pullback e
+// impulse_pullback_50) tambem ficaram de fora por pedido explicito, apos um LOSS real com
+// diferenca grande: sao as que tem MENOS confirmacoes entre as restantes (so 2 — impulso +
+// correcao), e eram as que mais dominavam o ranking/vigilancia so por volume de ocorrencias,
+// nao por serem as mais assertivas. Os detectores continuam existindo em classicStrategies.ts
+// (server) e os tipos/params aqui (reversivel, nao apagado), so nao aparecem mais no seletor nem
+// entram em nenhuma varredura ("Verificar"), scan-strategy ou vigilancia — tudo deriva desta lista.
 export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
   {
     id: 'support_resistance',
@@ -163,11 +167,6 @@ export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
     id: 'sequence_reversal',
     name: 'Reversão após sequência',
     description: 'N velas seguidas da mesma cor, seguidas de uma vela de reversão — entra na vela seguinte.',
-  },
-  {
-    id: 'impulse_pullback',
-    name: 'Impulso → Pullback → Continuação',
-    description: 'Vela de impulso anormalmente grande, seguida de correção pequena — entra na vela seguinte.',
   },
   {
     id: 'compression_breakout',
@@ -183,11 +182,6 @@ export const CLASSIC_STRATEGIES: ClassicStrategyInfo[] = [
     id: 'three_soldiers',
     name: 'Três Candles de Impulso',
     description: '3 velas da mesma cor com corpos fortes e progressão de preço — testa continuação na 4ª vela.',
-  },
-  {
-    id: 'impulse_pullback_50',
-    name: 'Pullback 50% do Impulso',
-    description: 'Impulso grande seguido de correção de 30–50% que fica contida na vela de impulso — entra na vela seguinte.',
   },
   {
     id: 'double_rejection',
