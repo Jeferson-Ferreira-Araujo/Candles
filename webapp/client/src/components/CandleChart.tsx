@@ -106,6 +106,18 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
         borderColor: '#334155',
         rightOffset: 5,
         shiftVisibleRangeOnNewBar: false, // nunca rola sozinho quando um tick novo chega — so por acao do usuario
+        // Por padrao a biblioteca formata o eixo em UTC, nao no fuso do navegador — o relogio
+        // ao vivo da tela (TradePanel, abaixo do grafico) usa hora LOCAL, entao os dois ficavam
+        // com uma diferenca fixa (3h no Brasil/UTC-3), fazendo o grafico parecer "errado" ou
+        // "faltando vela" quando comparado com o grafico de verdade da corretora (que mostra
+        // hora local). Forca o eixo a usar a hora local do navegador tambem, pra bater com o
+        // relogio da tela e com a corretora.
+        tickMarkFormatter: (time: number) =>
+          new Date(time * 1000).toLocaleTimeString('pt-BR', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+      },
+      localization: {
+        timeFormatter: (time: number) =>
+          new Date(time * 1000).toLocaleTimeString('pt-BR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       },
       rightPriceScale: { borderColor: '#334155' },
       crosshair: { mode: 0 },
