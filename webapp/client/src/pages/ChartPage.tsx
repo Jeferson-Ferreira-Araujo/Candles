@@ -1299,8 +1299,19 @@ export function ChartPage() {
               // aberta) nao da pra saber isso sem assinar TODOS eles, entao continuam so com a
               // estimativa por tempo decorrido.
               const liveDir = isActiveChartRow && liveCandle ? liveCandleDirection(liveCandle) : null;
+              // A linha da vigilancia chega via push do servidor (so reavalia apos o fechamento
+              // de vela + folga de 2s, ver WatchlistWatcher) — pro par que esta de fato aberto no
+              // grafico, ja temos uma fonte MAIS fresca (checkPendingSignal, rechecada a cada
+              // segundo nos ultimos 10s, ver ENTRY_CONFIRM_WINDOW_SECONDS): o grafico podia
+              // mostrar a 4a confirmacao enquanto essa linha ainda mostrava a 3a, so por nao ter
+              // chegado o push do servidor ainda. Pra essa linha (so essa, so quando bate a MESMA
+              // estrategia de totalStages) usa o progresso do grafico em vez do que veio do
+              // servidor, pra nunca mostrar algo mais ATRASADO do que o que o usuario ja ve.
+              const chartIsFresher = isActiveChartRow && chartProgressTotalStages === item.progress.totalStages;
+              const effectiveStage = chartIsFresher ? Math.max(item.progress.stage, chartSetupCandleTimes.length) : item.progress.stage;
+              const effectiveReadyNow = chartIsFresher ? item.progress.readyNow || pendingSignal !== null : item.progress.readyNow;
               const formingAgainstPattern =
-                !item.progress.readyNow && item.progress.direction !== null && liveDir !== null && liveDir !== item.progress.direction;
+                !effectiveReadyNow && item.progress.direction !== null && liveDir !== null && liveDir !== item.progress.direction;
               // 100% = pronta pra entrar na proxima vela. Entre uma confirmacao e a proxima, a
               // barra agora cresce SUAVEMENTE a cada segundo conforme a vela atual vai se
               // formando (em vez de ficar parada ate o fechamento e so entao pular pro proximo
@@ -1313,12 +1324,12 @@ export function ChartPage() {
               const stepSize = 100 / item.progress.totalStages;
               const elapsedFraction = formingAgainstPattern ? 0 : Math.min(1, (60 - secondsToMinuteClose) / 60);
               const percent =
-                isCancelled || item.progress.readyNow
+                isCancelled || effectiveReadyNow
                   ? 100
-                  : Math.min(100, Math.round(item.progress.stage * stepSize + stepSize * elapsedFraction * 0.9));
+                  : Math.min(100, Math.round(effectiveStage * stepSize + stepSize * elapsedFraction * 0.9));
               const barColor = isCancelled
                 ? 'bg-slate-500'
-                : item.progress.readyNow
+                : effectiveReadyNow
                   ? item.progress.direction === 'CALL'
                     ? 'bg-emerald-400'
                     : 'bg-rose-400'
@@ -1336,7 +1347,7 @@ export function ChartPage() {
                   } ${
                     isCancelled
                       ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
-                      : item.progress.readyNow
+                      : effectiveReadyNow
                         ? `font-bold animate-pulse ${
                             item.progress.direction === 'CALL'
                               ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
@@ -1363,11 +1374,11 @@ export function ChartPage() {
                     <span className="shrink-0 whitespace-nowrap">
                       {isCancelled
                         ? '❌ Não entre'
-                        : item.progress.readyNow
+                        : effectiveReadyNow
                           ? `Entrada em ${secondsToMinuteClose}s`
                           : formingAgainstPattern
-                            ? `${item.progress.stage}ª confirmação de ${item.progress.totalStages} · vela atual contra`
-                            : `${item.progress.stage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
+                            ? `${effectiveStage}ª confirmação de ${item.progress.totalStages} · vela atual contra`
+                            : `${effectiveStage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
