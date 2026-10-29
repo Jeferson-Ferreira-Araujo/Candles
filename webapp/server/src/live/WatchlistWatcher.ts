@@ -51,8 +51,18 @@ function sameProgress(a: StrategyProgress | null, b: StrategyProgress | null): b
 // so pra essa lista de vigilancia, que precisa ser "bem certeira", nao pro grafico em si.
 const MAX_REMAINING_STAGES_TO_SHOW = 2;
 
-function isVisibleInWatchlist(progress: StrategyProgress | null): progress is StrategyProgress {
-  return progress !== null && progress.totalStages - progress.stage <= MAX_REMAINING_STAGES_TO_SHOW;
+// Pedido explicito: pra "Tres Candles de Impulso" (3_soldiers), a 1a confirmacao sozinha ainda e
+// comum demais (qualquer vela isolada pode comecar um trio) — so deve aparecer na lista quando a
+// 2a confirmacao JA estiver formada, i.e. enquanto a 3a (a de entrada) esta se formando. As demais
+// estrategias seguem a regra geral (remaining <= 2, ver isVisibleInWatchlist).
+const STRATEGY_MIN_CONFIRMED_STAGE: Partial<Record<ClassicStrategyId, number>> = {
+  three_soldiers: 2,
+};
+
+function isVisibleInWatchlist(progress: StrategyProgress | null, strategyId: ClassicStrategyId): progress is StrategyProgress {
+  if (progress === null) return false;
+  const minConfirmedStage = STRATEGY_MIN_CONFIRMED_STAGE[strategyId] ?? progress.totalStages - MAX_REMAINING_STAGES_TO_SHOW;
+  return progress.stage >= minConfirmedStage;
 }
 
 /**
@@ -171,7 +181,7 @@ export class WatchlistWatcher {
       const rawProgress = detectStrategyProgress(candles, strategy);
       // Abaixo do limiar de visibilidade conta como "nada" PRA ESSA LISTA — fica so no detector
       // de verdade (chart) e no `lastProgress` interno, nunca chega a avisar o cliente.
-      const progress = isVisibleInWatchlist(rawProgress) ? rawProgress : null;
+      const progress = isVisibleInWatchlist(rawProgress, entry.strategyId) ? rawProgress : null;
       const last = this.lastProgress.get(key);
       const isFirstCheck = !this.lastProgress.has(key);
 
