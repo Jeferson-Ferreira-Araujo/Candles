@@ -85,11 +85,31 @@ function buildLevels(
  * decidir sinal (essa logica, com o cuidado de nao vazar informacao do futuro, fica em
  * `detectSupportResistance`). Usa TODOS os pivos do historico, ja que aqui so interessa "quais
  * sao os niveis relevantes agora", nao "o que era conhecido num ponto especifico do passado". */
+// Num historico longo (1+ dia de M1), ativos mais volateis acumulam muitos niveis validados —
+// a maioria longe demais do preco atual pra ser acionavel, so poluindo o grafico. Filtra pelos
+// mais PROXIMOS do preco agora e limita a quantidade, mostrando so os mais fortes (mais toques)
+// entre esses.
+const SR_LEVEL_MAX_DISTANCE_PCT = 0.08; // so niveis a ate 8% do preco atual
+const SR_LEVEL_MAX_COUNT = 3; // no maximo 3 suportes + 3 resistencias
+
 export function getCurrentSupportResistanceLevels(candles: Candle[]): { support: SRLevel[]; resistance: SRLevel[] } {
   const pivots = zigzagPivots(candles, SR_ZIGZAG_THRESHOLD_PCT);
+  const currentPrice = candles[candles.length - 1]?.close;
+
+  const nearbyAndStrongest = (levels: SRLevel[]): SRLevel[] => {
+    const nearby =
+      currentPrice === undefined
+        ? levels
+        : levels.filter((l) => Math.abs(l.price - currentPrice) / currentPrice <= SR_LEVEL_MAX_DISTANCE_PCT);
+    return nearby
+      .slice()
+      .sort((a, b) => b.touches - a.touches)
+      .slice(0, SR_LEVEL_MAX_COUNT);
+  };
+
   return {
-    support: buildLevels(pivots, 'low', SR_LEVEL_TOLERANCE_PCT, SR_MIN_TOUCHES),
-    resistance: buildLevels(pivots, 'high', SR_LEVEL_TOLERANCE_PCT, SR_MIN_TOUCHES),
+    support: nearbyAndStrongest(buildLevels(pivots, 'low', SR_LEVEL_TOLERANCE_PCT, SR_MIN_TOUCHES)),
+    resistance: nearbyAndStrongest(buildLevels(pivots, 'high', SR_LEVEL_TOLERANCE_PCT, SR_MIN_TOUCHES)),
   };
 }
 

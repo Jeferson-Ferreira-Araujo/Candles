@@ -5,17 +5,11 @@ import { Header } from './Header.js';
 import { api } from '../api.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
-const NAV_ITEMS = [
-  { to: '/', label: 'Gráfico', hint: 'Tempo real', icon: '📊' },
-  { to: '/monitor', label: 'Monitor', hint: 'Eventos ao vivo', icon: '📈' },
-  { to: '/pattern', label: 'Padrão', hint: 'Editor de padrão', icon: '🕯️' },
-  { to: '/pattern-discovery', label: 'Descobrir', hint: 'Identificar padrões', icon: '🔎' },
-  { to: '/classic-strategies', label: 'Clássicas', hint: 'Estratégias clássicas', icon: '📐' },
-  { to: '/backtest', label: 'Validação 30D', hint: 'Histórico da estratégia', icon: '🗓️' },
-  { to: '/operations', label: 'Operações', hint: 'Sinais e resultados', icon: '📋' },
-  { to: '/settings', label: 'Configurações', hint: 'Robô e risco', icon: '⚙️' },
-  { to: '/logs', label: 'Logs', hint: 'Eventos do sistema', icon: '🧾' },
-];
+// So o Grafico aparece no menu agora (pedido explicito do usuario: o app tinha ficado
+// complexo demais). As demais telas (Monitor, Padrao, Descobrir, Classicas, Validacao 30D,
+// Operacoes, Configuracoes, Logs) CONTINUAM existindo e acessiveis por URL direta — so nao
+// tem mais link na barra lateral. Ver App.tsx pras rotas completas.
+const NAV_ITEMS = [{ to: '/', label: 'Gráfico', hint: 'Tempo real', icon: '📊' }];
 
 interface LayoutProps {
   requiresLogin: boolean;

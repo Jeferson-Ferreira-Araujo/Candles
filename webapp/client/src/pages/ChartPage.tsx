@@ -81,6 +81,10 @@ export function ChartPage() {
   const [hasActivePattern, setHasActivePattern] = useState(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [srLevels, setSrLevels] = useState<SRLevelLine[]>([]);
+  // Liga/desliga o indicador de Suporte/Resistencia no grafico — igual ao menu de indicadores
+  // das corretoras. Ligado por padrao; o usuario pode desligar se achar que estao poluindo a
+  // tela num ativo mais volatil.
+  const [showSRIndicator, setShowSRIndicator] = useState(true);
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [watchingAssetId, setWatchingAssetId] = useState<number | null>(null);
@@ -252,11 +256,22 @@ export function ChartPage() {
   // seletor — 'auto' reaproveita a varredura completa (10 estrategias), um id especifico dispara
   // a varredura de SO aquela estrategia em todos os ativos, e 'pattern' (padrao customizado) nao
   // tem varredura "todos os ativos" ainda, entao so recarrega o ativo ja selecionado.
+  // Verificar: respeita o ativo escolhido (ou "Todos") e a estrategia escolhida (ou
+  // "Automatico" = testa todas). 4 combinacoes:
+  //  - ativo especifico + estrategia especifica -> carrega direto esse par.
+  //  - ativo especifico + automatico -> testa todas as estrategias NESSE ativo, abre a melhor.
+  //  - todos os ativos + estrategia especifica -> varre todos os ativos so com essa estrategia.
+  //  - todos os ativos + automatico -> varredura completa (como ja era).
   function handleVerify() {
+    if (selectedAssetId !== null) {
+      loadChartFor(selectedAssetId, strategyMode);
+      return;
+    }
     if (strategyMode === 'auto') {
       runFullScan();
     } else if (strategyMode === 'pattern') {
-      if (selectedAssetId !== null) loadChartFor(selectedAssetId);
+      // padrao customizado nao tem varredura "todos os ativos" ainda — precisa escolher um ativo.
+      setChartError('Escolha um ativo específico para testar o padrão customizado.');
     } else {
       runStrategyScan(strategyMode);
     }
@@ -382,14 +397,6 @@ export function ChartPage() {
   function nameOf(id: number | null): string {
     if (id === null) return '';
     return assets.find((a) => a.id === id)?.name ?? `Ativo ${id}`;
-  }
-
-  function loadChart() {
-    if (selectedAssetId === null) {
-      setChartError('Selecione um ativo antes de carregar o gráfico.');
-      return;
-    }
-    loadChartFor(selectedAssetId);
   }
 
   function applyRanking(row: AssetScanRanking) {
@@ -586,15 +593,30 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Barra superior: a ESTRATEGIA e a escolha principal agora — o ativo e sempre "todos" por
-          padrao, verificado de uma vez so ao clicar em Verificar (ver handleVerify). O seletor
-          de ativo isolado vira secundario, so pra abrir um ativo especifico manualmente. */}
+      {/* Barra superior: Ativo (padrao Todos), Estrategia (padrao Automatico = testa todas),
+          Dias (padrao ja vem de hoje) e Verificar — ver handleVerify pra como cada combinacao
+          de ativo/estrategia escolhida e interpretada. */}
       <div className="px-3 sm:px-6 py-2 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
+        <select
+          value={selectedAssetId ?? ''}
+          onChange={(e) => setSelectedAssetId(e.target.value === '' ? null : Number(e.target.value))}
+          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm min-w-[150px]"
+          title="Ativo a verificar — Todos testa a estratégia escolhida em todo mundo"
+        >
+          <option value="">Todos os ativos</option>
+          {assets.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+              {a.isOtc ? ' (OTC)' : ''}
+            </option>
+          ))}
+        </select>
+
         <select
           value={strategyMode}
           onChange={(e) => onStrategyModeChange(e.target.value as StrategyMode)}
           className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm max-w-[180px] font-medium"
-          title="Qual estratégia verificar em todos os ativos"
+          title="Estratégia a verificar — Automático testa todas"
         >
           <option value="auto">⭐ Automático (testa todas)</option>
           {hasActivePattern && <option value="pattern">Padrão customizado ativo</option>}
@@ -619,39 +641,28 @@ export function ChartPage() {
         <button
           onClick={handleVerify}
           disabled={scanStatus === 'scanning' || loadingChart}
-          title="Verifica a estratégia escolhida em TODOS os ativos: quais estão formando o padrão agora e quais tiveram mais wins"
+          title="Verifica o ativo e a estratégia escolhidos (ou todos, se não escolher)"
           className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-semibold whitespace-nowrap"
         >
-          {scanStatus === 'scanning' ? '🔍 Verificando...' : '🔍 Verificar'}
+          {scanStatus === 'scanning' || loadingChart ? '🔍 Verificando...' : '🔍 Verificar'}
         </button>
 
-        {/* Ativo especifico — secundario, so pra abrir manualmente um ativo fora do resultado
-            da verificacao (ex.: revisar algo que ja conhece). */}
+        {/* Indicadores — igual ao menu de indicadores das corretoras: liga/desliga o que
+            aparece desenhado em cima do grafico. So Suporte/Resistencia por enquanto. */}
         <details className="relative">
           <summary className="list-none cursor-pointer text-xs text-slate-500 hover:text-slate-300 px-2 py-1.5 select-none">
-            ativo específico ▾
+            📐 indicadores ▾
           </summary>
-          <div className="absolute z-20 mt-1 flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-lg p-1.5 shadow-lg">
-            <select
-              value={selectedAssetId ?? ''}
-              onChange={(e) => setSelectedAssetId(Number(e.target.value))}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm min-w-[140px]"
-            >
-              {assets.length === 0 && <option value="">Carregando...</option>}
-              {assets.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                  {a.isOtc ? ' (OTC)' : ''}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={loadChart}
-              disabled={loadingChart}
-              className="rounded-lg border border-slate-700 hover:bg-slate-800 disabled:opacity-50 px-2.5 py-1.5 text-xs whitespace-nowrap"
-            >
-              Carregar
-            </button>
+          <div className="absolute z-20 mt-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 shadow-lg whitespace-nowrap">
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={showSRIndicator}
+                onChange={(e) => setShowSRIndicator(e.target.checked)}
+                className="accent-sky-500"
+              />
+              Suporte / Resistência
+            </label>
           </div>
         </details>
 
@@ -934,7 +945,7 @@ export function ChartPage() {
               liveCandle={liveCandle}
               markers={markers}
               activeOrders={activeOrderLines}
-              srLevels={srLevels}
+              srLevels={showSRIndicator ? srLevels : []}
               fill
             />
           ) : (
