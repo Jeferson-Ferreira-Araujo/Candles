@@ -323,7 +323,6 @@ app.post('/api/support-resistance-levels', async (req, res) => {
 });
 
 const SCAN_ALL_ASSETS_CONCURRENCY = 5;
-const SCAN_ALL_ASSETS_MIN_OCCURRENCES = 3;
 const ALL_CLASSIC_STRATEGY_CONFIGS = CLASSIC_STRATEGIES.map((s) => defaultClassicStrategyConfig(s.id));
 
 interface AssetScanRanking {
@@ -366,11 +365,19 @@ app.post('/api/scan-all-assets', async (req, res) => {
         if (i >= assets.length) return;
         const asset = assets[i]!;
         try {
+          // Pedido explicito: olhar pra TODOS os ativos e TODAS as estrategias o tempo todo,
+          // sem exigir um minimo de ocorrencias ja acontecidas hoje pra entrar no ranking — um
+          // par so fica de fora da varredura se o proprio servidor falhar (catch abaixo), nunca
+          // por ter pouco (ou nenhum) historico ainda. A assertividade continua vindo do
+          // ORDENAR por taxa de acerto (winRate desc, occurrences desc): um par com 0 ocorrencias
+          // fica com winRate=0 e cai pro fim da lista sozinho, sem precisar de um filtro a mais —
+          // as regras rigidas (minimo de confirmacoes por estrategia, janela de confirmacao dos
+          // ultimos 10s antes de acender "ENTRADA AGORA", etc.) continuam intactas e sao elas que
+          // seguram a qualidade do sinal, nao esse corte por volume.
           const results = await runAllClassicStrategiesForAsset(brokerManager.get(), asset.id, days!, ALL_CLASSIC_STRATEGY_CONFIGS);
           for (const r of results) {
             const total = r.summary.wins + r.summary.losses + r.summary.dojis;
-            if (total < SCAN_ALL_ASSETS_MIN_OCCURRENCES) continue;
-            const winRate = r.summary.wins / total;
+            const winRate = total > 0 ? r.summary.wins / total : 0;
             ranking.push({
               activeId: asset.id,
               assetName: asset.name,
