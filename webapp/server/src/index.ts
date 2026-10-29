@@ -40,7 +40,7 @@ import {
 import { CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId } from '@polarium12c/shared';
 import { LiveMonitorService } from './live/LiveMonitorService.js';
 import { OrderService } from './orders/OrderService.js';
-import { WatchlistWatcher } from './live/WatchlistWatcher.js';
+import { WatchlistWatcher, type WatchlistEntry } from './live/WatchlistWatcher.js';
 import { createSession, destroySession, isRequestAuthenticated, requireAuth, SESSION_COOKIE } from './auth/session.js';
 import { loginWithCredentials } from './auth/polariumHeadlessLogin.js';
 
@@ -479,6 +479,34 @@ app.post('/api/scan-strategy', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+// Watchlist: fica de olho em segundo plano nos pares ativo+estrategia escolhidos pelo cliente
+// (tipicamente os do ranking da ultima verificacao, ver WatchlistWatcher) e avisa via WebSocket
+// (evento WATCHLIST_SIGNAL) quando o setup de qualquer um deles se completar — mesmo que o
+// usuario esteja olhando outro ativo no grafico agora. Poucos pares (ranking = ate 5), entao
+// nao tem o risco de sobrecarga que vigiar TODOS os ativos tinha.
+app.post('/api/watchlist', async (req, res) => {
+  const { entries } = req.body as { entries?: WatchlistEntry[] };
+  if (!watchlistWatcher) {
+    res.status(400).json({ error: 'Watchlist não está pronta (faça login primeiro).' });
+    return;
+  }
+  if (!Array.isArray(entries)) {
+    res.status(400).json({ error: 'Informe entries (lista de {activeId, assetName, strategyId, strategyName}).' });
+    return;
+  }
+  try {
+    await watchlistWatcher.setEntries(entries);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete('/api/watchlist', async (_req, res) => {
+  await watchlistWatcher?.stop();
+  res.json({ ok: true });
 });
 
 app.get('/api/patterns', async (_req, res) => {

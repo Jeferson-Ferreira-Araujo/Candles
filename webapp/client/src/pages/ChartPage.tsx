@@ -209,6 +209,22 @@ export function ChartPage() {
     applyStrategy(mode);
   }
 
+  // Vigia em segundo plano os pares ativo+estrategia do RANKING (ate 5) — avisa via WebSocket
+  // quando "esse mesmo cenario" (o que colocou aquele ativo no ranking) comeca a se formar de
+  // novo, mesmo com o usuario olhando outro ativo no grafico. Dedup por ativo+estrategia (o
+  // ranking ja vem sem repetir), cap de seguranca em 5 — poucos pares, sem o risco de
+  // sobrecarga que vigiar TODOS os ativos tinha.
+  function updateWatchlistFromRanking(top: AssetScanRanking[]) {
+    const entries: WatchlistEntry[] = top.slice(0, 5).map((row) => ({
+      activeId: row.activeId,
+      assetName: row.assetName,
+      strategyId: row.strategyId,
+      strategyName: row.strategyName,
+    }));
+    setWatchlistSignals({});
+    api.setWatchlist(entries).catch(() => {});
+  }
+
   // Varredura completa: roda as 10 estrategias classicas em TODOS os ativos (periodo curto,
   // 1 dia) e abre direto o par ativo+estrategia que teve a melhor taxa de acerto.
   const runFullScan = useCallback(async () => {
@@ -217,6 +233,7 @@ export function ChartPage() {
       const res = await api.scanAllAssets(SCAN_DAYS);
       setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
       setScanRanking(res.top);
+      updateWatchlistFromRanking(res.top);
       setScanStatus('done');
       if (res.best) {
         setDays(SCAN_DAYS);
@@ -239,6 +256,7 @@ export function ChartPage() {
         const res = await api.scanStrategy(strategyId, SCAN_DAYS);
         setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
         setScanRanking(res.top);
+        updateWatchlistFromRanking(res.top);
         setShowRanking(true); // so 5 linhas agora — cabe aberto direto, sem precisar clicar de novo
         setScanStatus('done');
         if (res.best) {
@@ -717,28 +735,6 @@ export function ChartPage() {
         )}
       </div>
 
-      {/* Avisos da watchlist: outros ativos (fora o que esta aberto agora) cujo setup acabou
-          de se completar — toca pra abrir aquele ativo+estrategia na hora. */}
-      {Object.keys(watchlistSignals).length > 0 && (
-        <div className="px-3 sm:px-6 py-1.5 flex items-center gap-2 flex-wrap border-b border-slate-800 bg-amber-950/20">
-          {Object.entries(watchlistSignals).map(([key, sig]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => {
-                setStrategyMode(sig.strategyId);
-                loadChartFor(sig.activeId, sig.strategyId, SCAN_DAYS);
-              }}
-              className={`flex items-center gap-1.5 rounded-full pl-2 pr-3 py-1 text-xs font-semibold animate-pulse ${
-                sig.direction === 'CALL' ? 'bg-emerald-600/90 text-white' : 'bg-rose-600/90 text-white'
-              }`}
-            >
-              <span className="text-sm">🔔</span>
-              {sig.assetName} · {sig.strategyName} · {sig.direction === 'CALL' ? 'CALL' : 'PUT'}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Linha de status: varredura OU melhor estrategia (nunca as duas, pra poupar altura —
           importante no celular deitado, onde a tela e baixa). */}
@@ -1019,6 +1015,37 @@ export function ChartPage() {
           )}
         </div>
       </div>
+
+      {/* Estrategias do ranking se formando AGORA — abaixo do grafico, nao em cima (pra nao
+          empurrar o grafico pra baixo toda hora que um sinal aparece/some). Clicar troca o
+          grafico direto pro ativo+estrategia daquele aviso. */}
+      {Object.keys(watchlistSignals).length > 0 && (
+        <div className="px-3 sm:px-6 py-3 border-t border-slate-800 bg-slate-950">
+          <div className="text-xs font-semibold text-slate-400 mb-2">🔔 Formando agora (ranking)</div>
+          <div className="flex flex-col gap-1.5">
+            {Object.entries(watchlistSignals).map(([key, sig]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setStrategyMode(sig.strategyId);
+                  loadChartFor(sig.activeId, sig.strategyId, SCAN_DAYS);
+                }}
+                className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm font-semibold text-left animate-pulse ${
+                  sig.direction === 'CALL'
+                    ? 'bg-emerald-600/15 border-emerald-700 text-emerald-300 hover:bg-emerald-600/25'
+                    : 'bg-rose-600/15 border-rose-700 text-rose-300 hover:bg-rose-600/25'
+                }`}
+              >
+                <span>
+                  {sig.assetName} <span className="text-slate-400 font-normal">· {sig.strategyName}</span>
+                </span>
+                <span>{sig.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

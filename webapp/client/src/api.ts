@@ -184,6 +184,15 @@ export const api = {
       }>(r)
     ),
 
+  setWatchlist: (entries: WatchlistEntry[]) =>
+    req('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    }).then((r) => json<{ ok: true }>(r)),
+
+  clearWatchlist: () => req('/api/watchlist', { method: 'DELETE' }).then((r) => json<{ ok: true }>(r)),
+
   getSupportResistanceLevels: (activeId: number, days: number) =>
     req('/api/support-resistance-levels', {
       method: 'POST',

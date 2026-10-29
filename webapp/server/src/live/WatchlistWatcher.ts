@@ -1,10 +1,12 @@
-import { CANDLE_SIZE_M1, CLASSIC_STRATEGIES, defaultClassicStrategyConfig, type ClassicStrategyId, type Direction } from '@polarium12c/shared';
+import { CANDLE_SIZE_M1, defaultClassicStrategyConfig, type ClassicStrategyId, type Direction } from '@polarium12c/shared';
 import type { BrokerAdapter } from '../broker/BrokerAdapter.js';
 import { detectPendingSignal, fetchClosedCandles } from '../strategies/classicStrategies.js';
 
-export interface WatchlistAsset {
+export interface WatchlistEntry {
   activeId: number;
   assetName: string;
+  strategyId: ClassicStrategyId;
+  strategyName: string;
 }
 
 export interface WatchlistSignalPayload {
@@ -16,26 +18,25 @@ export interface WatchlistSignalPayload {
   direction: Direction | null;
 }
 
-const DAYS = 1; // mesmo periodo curto da varredura que tipicamente origina a lista de ativos vigiados
-// Velas M1 de ativos diferentes fecham todas perto do mesmo segundo (topo do minuto) — sem um
-// limite, uma vigilancia de 100+ ativos dispararia 100+ fetchClosedCandles() simultaneos na
-// corretora nesse instante. Uma fila com concorrencia limitada espalha essa carga no tempo.
+const DAYS = 1; // mesmo periodo curto da varredura que tipicamente origina a lista de pares vigiados
+// Velas M1 de ativos diferentes fecham todas perto do mesmo segundo (topo do minuto) — mesmo
+// com poucos pares vigiados, uma fila com concorrencia limitada evita rajadas na corretora.
 const CONCURRENCY = 5;
 
 /**
- * Fica de olho, em segundo plano, num conjunto de ativos (hoje: TODOS os disponiveis) — assina
- * as velas ao vivo de cada um e, toda vez que uma fecha, roda `detectPendingSignal` (mesma
- * logica usada pelo aviso "ENTRADA AGORA" da tela do grafico) pra TODAS as 10 estrategias
- * classicas contra o MESMO historico ja buscado (um fetch por ativo, nao um por estrategia).
+ * Fica de olho, em segundo plano, num punhado de pares ATIVO+ESTRATEGIA especificos (hoje: os
+ * do ranking da ultima verificacao, ver POST /api/watchlist) — assina as velas ao vivo de cada
+ * ATIVO envolvido (uma assinatura por ativo, mesmo que ele apareca com 2+ estrategias) e, toda
+ * vez que uma vela fecha, roda `detectPendingSignal` (mesma logica do aviso "ENTRADA AGORA" da
+ * tela do grafico) SO para a(s) estrategia(s) registrada(s) daquele ativo — nao todas as 11,
+ * ja que o pedido e "esse mesmo cenario do ranking esta se repetindo?", nao uma varredura geral.
  *
  * So emite evento quando o estado de um par ativo+estrategia MUDA (comecou a ter sinal pendente
- * ou deixou de ter) — ao contrario de reportar os 10 resultados a cada fechamento de vela, o que
- * inundaria o cliente de eventos quase todos "sem sinal" (a grande maioria das combinacoes nao
- * bate a cada minuto). Guarda o ultimo estado conhecido por par em `activeSignals`.
+ * ou deixou de ter), pra nao inundar o cliente de eventos "sem sinal" a cada fechamento de vela.
  */
 export class WatchlistWatcher {
   private readonly unsubscribers = new Map<number, () => void>();
-  private readonly assets = new Map<number, WatchlistAsset>();
+  private readonly entriesByAsset = new Map<number, WatchlistEntry[]>();
   private readonly activeSignals = new Map<string, Direction>();
   private readonly queue: number[] = [];
   private inFlight = 0;
@@ -45,16 +46,22 @@ export class WatchlistWatcher {
     private readonly onSignal: (payload: WatchlistSignalPayload) => void
   ) {}
 
-  /** Troca a lista inteira de ativos vigiados (cancela as assinaturas antigas, assina as novas). */
-  async setAssets(assets: WatchlistAsset[]): Promise<void> {
+  /** Troca a lista inteira de pares vigiados (cancela as assinaturas antigas, assina as novas).
+   * Agrupa por ativo — se o mesmo ativo aparecer com 2+ estrategias, assina so UMA vez. */
+  async setEntries(entries: WatchlistEntry[]): Promise<void> {
     await this.stop();
-    for (const asset of assets) {
-      this.assets.set(asset.activeId, asset);
-      const unsubscribe = await this.broker.subscribeCandles(asset.activeId, CANDLE_SIZE_M1, (candle) => {
+    for (const entry of entries) {
+      const list = this.entriesByAsset.get(entry.activeId);
+      if (list) {
+        list.push(entry);
+        continue; // ja existe assinatura de vela pra este ativo
+      }
+      this.entriesByAsset.set(entry.activeId, [entry]);
+      const unsubscribe = await this.broker.subscribeCandles(entry.activeId, CANDLE_SIZE_M1, (candle) => {
         if (!candle.isClosed) return;
-        this.enqueue(asset.activeId);
+        this.enqueue(entry.activeId);
       });
-      this.unsubscribers.set(asset.activeId, unsubscribe);
+      this.unsubscribers.set(entry.activeId, unsubscribe);
     }
   }
 
@@ -67,7 +74,7 @@ export class WatchlistWatcher {
       }
     }
     this.unsubscribers.clear();
-    this.assets.clear();
+    this.entriesByAsset.clear();
     this.activeSignals.clear();
     this.queue.length = 0;
     this.inFlight = 0;
@@ -92,22 +99,34 @@ export class WatchlistWatcher {
   }
 
   private async checkAsset(activeId: number): Promise<void> {
-    const asset = this.assets.get(activeId);
-    if (!asset) return; // foi removido da lista entre a assinatura e este fechamento
+    const entries = this.entriesByAsset.get(activeId);
+    if (!entries || entries.length === 0) return; // foi removido da lista entre a assinatura e este fechamento
     const candles = await fetchClosedCandles(this.broker, activeId, DAYS);
 
-    for (const info of CLASSIC_STRATEGIES) {
-      const key = `${activeId}:${info.id}`;
-      const strategy = defaultClassicStrategyConfig(info.id);
+    for (const entry of entries) {
+      const key = `${activeId}:${entry.strategyId}`;
+      const strategy = defaultClassicStrategyConfig(entry.strategyId);
       const pending = detectPendingSignal(candles, strategy);
       const wasActive = this.activeSignals.has(key);
 
       if (pending) {
         this.activeSignals.set(key, pending.direction);
-        this.onSignal({ activeId, assetName: asset.assetName, strategyId: info.id, strategyName: info.name, direction: pending.direction });
+        this.onSignal({
+          activeId,
+          assetName: entry.assetName,
+          strategyId: entry.strategyId,
+          strategyName: entry.strategyName,
+          direction: pending.direction,
+        });
       } else if (wasActive) {
         this.activeSignals.delete(key);
-        this.onSignal({ activeId, assetName: asset.assetName, strategyId: info.id, strategyName: info.name, direction: null });
+        this.onSignal({
+          activeId,
+          assetName: entry.assetName,
+          strategyId: entry.strategyId,
+          strategyName: entry.strategyName,
+          direction: null,
+        });
       }
     }
   }
