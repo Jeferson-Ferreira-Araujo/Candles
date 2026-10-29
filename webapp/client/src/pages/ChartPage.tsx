@@ -1106,6 +1106,16 @@ export function ChartPage() {
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
             {sortedWatchlist.map(([key, item]) => {
               const isCancelled = item.cancelledAt !== undefined;
+              // 100% = pronta pra entrar na proxima vela — a barra enche conforme as
+              // confirmacoes vao acontecendo, nao so o texto "Na de M".
+              const percent = isCancelled ? 100 : Math.round((item.progress.stage / item.progress.totalStages) * 100);
+              const barColor = isCancelled
+                ? 'bg-slate-500'
+                : item.progress.readyNow
+                  ? item.progress.direction === 'CALL'
+                    ? 'bg-emerald-400'
+                    : 'bg-rose-400'
+                  : 'bg-sky-500';
               return (
                 <button
                   key={key}
@@ -1114,7 +1124,7 @@ export function ChartPage() {
                     setStrategyMode(item.strategyId);
                     loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
                   }}
-                  className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
+                  className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
                     isCancelled
                       ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
                       : item.progress.readyNow
@@ -1126,21 +1136,26 @@ export function ChartPage() {
                         : 'border-slate-700 text-slate-300 hover:bg-slate-900'
                   }`}
                 >
-                  <span className="truncate">
-                    {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
-                    {!isCancelled && item.progress.direction && (
-                      <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {item.progress.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
-                      </span>
-                    )}
-                  </span>
-                  <span className="shrink-0 whitespace-nowrap">
-                    {isCancelled
-                      ? '❌ Não entre'
-                      : item.progress.readyNow
-                        ? `Entrada em ${secondsToMinuteClose}s`
-                        : `${item.progress.stage}ª confirmação de ${item.progress.totalStages}`}
-                  </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">
+                      {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
+                      {!isCancelled && item.progress.direction && (
+                        <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {item.progress.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 whitespace-nowrap">
+                      {isCancelled
+                        ? '❌ Não entre'
+                        : item.progress.readyNow
+                          ? `Entrada em ${secondsToMinuteClose}s`
+                          : `${item.progress.stage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${percent}%` }} />
+                  </div>
                 </button>
               );
             })}
