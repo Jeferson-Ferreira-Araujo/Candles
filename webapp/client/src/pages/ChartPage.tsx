@@ -166,6 +166,11 @@ export function ChartPage() {
   // confirmacao parcial, dando a entender que a estrategia ja tinha completado todas as etapas
   // quando na verdade so faltava, por exemplo, a 3a de 5 (Compressao->Breakout).
   const [chartProgressTotalStages, setChartProgressTotalStages] = useState<number | null>(null);
+  // Direcao do progresso ABERTO no grafico agora (null = ainda nao decidida, ex.: Compressao
+  // antes do rompimento) — junto com chartSetupCandleTimes/chartProgressTotalStages, da pra
+  // espelhar o progresso do grafico na linha da vigilancia sem depender do que o servidor ainda
+  // nao mandou (ver isActiveChartRow mais abaixo).
+  const [chartProgressDirection, setChartProgressDirection] = useState<Direction | null>(null);
   const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
   const [scanInfo, setScanInfo] = useState<{ assetsScanned: number; tookMs: number; bestAssetName?: string } | null>(null);
   const [scanRanking, setScanRanking] = useState<AssetScanRanking[]>([]);
@@ -227,6 +232,7 @@ export function ChartPage() {
       setPendingSignal(null);
       setChartSetupCandleTimes([]);
       setChartProgressTotalStages(null);
+      setChartProgressDirection(null);
       return;
     }
     try {
@@ -234,9 +240,12 @@ export function ChartPage() {
       // Os marcadores de confirmacao (quais velas estao contando) continuam refletindo o
       // progresso de verdade o tempo todo, mesmo fora da janela de confirmacao final abaixo —
       // so o AVISO de entrada em si (pendingSignal, banner "ENTRADA AGORA" + botoes pulsando)
-      // segue a regra especial.
+      // segue a regra especial. IMPORTANTE: sempre SUBSTITUI (nunca "Math.max" com o valor
+      // anterior) — uma quebra de padrao pode fazer o stage CAIR (ex.: 4a de 5 pra 1a de 5, um
+      // setup novo comecando do zero), e precisa refletir isso, nao so crescer.
       setChartSetupCandleTimes(progress?.setupCandleTimes ?? []);
       setChartProgressTotalStages(progress?.totalStages ?? null);
+      setChartProgressDirection(progress?.direction ?? null);
 
       const secondsToClose = 60 - new Date().getSeconds();
       const insideConfirmWindow = secondsToClose <= ENTRY_CONFIRM_WINDOW_SECONDS;
@@ -269,6 +278,7 @@ export function ChartPage() {
     setPendingSignal(null);
     setChartSetupCandleTimes([]);
     setChartProgressTotalStages(null);
+    setChartProgressDirection(null);
     setActiveOrders([]);
     setSrLevels([]);
     try {
@@ -1307,11 +1317,17 @@ export function ChartPage() {
               // chegado o push do servidor ainda. Pra essa linha (so essa, so quando bate a MESMA
               // estrategia de totalStages) usa o progresso do grafico em vez do que veio do
               // servidor, pra nunca mostrar algo mais ATRASADO do que o que o usuario ja ve.
+              // IMPORTANTE: quando o grafico e mais fresco, usa o valor dele DIRETO — nunca
+              // Math.max/OR com o valor antigo do servidor. Uma quebra de padrao pode fazer o
+              // stage CAIR (ex.: a 4a confirmacao nao se sustentou, um setup novo comecou do
+              // zero na 1a) — um Math.max tratava isso como "so sobe", entao a linha ficava
+              // presa mostrando a 4a confirmacao antiga mesmo com o grafico ja na 1a de novo.
               const chartIsFresher = isActiveChartRow && chartProgressTotalStages === item.progress.totalStages;
-              const effectiveStage = chartIsFresher ? Math.max(item.progress.stage, chartSetupCandleTimes.length) : item.progress.stage;
-              const effectiveReadyNow = chartIsFresher ? item.progress.readyNow || pendingSignal !== null : item.progress.readyNow;
+              const effectiveStage = chartIsFresher ? chartSetupCandleTimes.length : item.progress.stage;
+              const effectiveReadyNow = chartIsFresher ? pendingSignal !== null : item.progress.readyNow;
+              const effectiveDirection = chartIsFresher ? chartProgressDirection : item.progress.direction;
               const formingAgainstPattern =
-                !effectiveReadyNow && item.progress.direction !== null && liveDir !== null && liveDir !== item.progress.direction;
+                !effectiveReadyNow && effectiveDirection !== null && liveDir !== null && liveDir !== effectiveDirection;
               // 100% = pronta pra entrar na proxima vela. Entre uma confirmacao e a proxima, a
               // barra agora cresce SUAVEMENTE a cada segundo conforme a vela atual vai se
               // formando (em vez de ficar parada ate o fechamento e so entao pular pro proximo
@@ -1330,7 +1346,7 @@ export function ChartPage() {
               const barColor = isCancelled
                 ? 'bg-slate-500'
                 : effectiveReadyNow
-                  ? item.progress.direction === 'CALL'
+                  ? effectiveDirection === 'CALL'
                     ? 'bg-emerald-400'
                     : 'bg-rose-400'
                   : 'bg-sky-500';
@@ -1349,7 +1365,7 @@ export function ChartPage() {
                       ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
                       : effectiveReadyNow
                         ? `font-bold animate-pulse ${
-                            item.progress.direction === 'CALL'
+                            effectiveDirection === 'CALL'
                               ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
                               : 'bg-rose-600/20 border-rose-500 text-rose-300'
                           }`
@@ -1365,9 +1381,9 @@ export function ChartPage() {
                           ({item.stats.wins}W {item.stats.losses}L hoje)
                         </span>
                       )}
-                      {!isCancelled && item.progress.direction && (
-                        <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {item.progress.direction === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
+                      {!isCancelled && effectiveDirection && (
+                        <span className={`ml-2 font-semibold ${effectiveDirection === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {effectiveDirection === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
                         </span>
                       )}
                     </span>
