@@ -410,17 +410,24 @@ export function ChartPage() {
 
     // A vela que acabou de fechar pode ter sido a entrada de uma ocorrencia da estrategia —
     // sem recalcular aqui, o placar W/L e os marcadores do grafico ficam "congelados" no
-    // snapshot de quando a tela abriu, mesmo com novos WIN/LOSS acontecendo ao vivo.
+    // snapshot de quando a tela abriu, mesmo com novos WIN/LOSS acontecendo ao vivo. A mesma
+    // folga de 2s usada na vigilancia em segundo plano (WatchlistWatcher) e aplicada aqui —
+    // sem ela, o proprio grafico aberto podia, por um instante, "esquecer" a confirmacao que
+    // acabou de fechar (corretora ainda indexando a vela no historico) e so recuperar o
+    // marcador dela no PROXIMO fechamento.
     const assetId = watchingAssetIdRef.current;
     if (assetId === null) return;
-    resolveStrategy(assetId, daysRef.current, strategyModeRef.current)
-      .then((result) => {
-        setBest(result);
-        checkPendingSignal(result, assetId);
-      })
-      .catch(() => {
-        // falha ao recalcular nao deve derrubar a tela — mantem o placar anterior
-      });
+    const timer = setTimeout(() => {
+      resolveStrategy(assetId, daysRef.current, strategyModeRef.current)
+        .then((result) => {
+          setBest(result);
+          checkPendingSignal(result, assetId);
+        })
+        .catch(() => {
+          // falha ao recalcular nao deve derrubar a tela — mantem o placar anterior
+        });
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [events, checkPendingSignal]);
 
   // Resultado de QUALQUER entrada manual em acompanhamento: WIN/LOSS/DOJI chegam via evento
@@ -562,9 +569,18 @@ export function ChartPage() {
   }
   // Marca EXATAMENTE quais velas ja fechadas estao sendo contadas na analise da estrategia
   // aberta agora (parcial ou pronta) — numeradas na ordem (1a, 2a...), pra responder "quais
-  // velas estao sendo contadas nessa analise".
+  // velas estao sendo contadas nessa analise". A ULTIMA contada ganha destaque proprio (ambar,
+  // nao azul) pra deixar claro que e a vela final antes da entrada — a proxima vela que abrir
+  // (ou a propria, se ja pronta) e onde a entrada acontece.
   chartSetupCandleTimes.forEach((time, idx) => {
-    markers.push({ time, position: 'belowBar', color: '#38bdf8', shape: 'circle', text: `${idx + 1}ª` });
+    const isLast = idx === chartSetupCandleTimes.length - 1;
+    markers.push({
+      time,
+      position: 'belowBar',
+      color: isLast ? '#f59e0b' : '#38bdf8',
+      shape: 'circle',
+      text: isLast ? `${idx + 1}ª (última)` : `${idx + 1}ª`,
+    });
   });
   // Cada entrada manual resolvida marca a sua PROPRIA vela de entrada (M1 = 60s antes da
   // expiracao) com o resultado e o valor — 2+ entradas simultaneas geram 2+ marcadores.
@@ -1116,6 +1132,10 @@ export function ChartPage() {
                     ? 'bg-emerald-400'
                     : 'bg-rose-400'
                   : 'bg-sky-500';
+              // Par ativo+estrategia que esta de fato aberto no grafico agora — pra deixar
+              // visivelmente marcado qual linha da lista corresponde a tela que o usuario esta
+              // olhando, sem precisar comparar nome de ativo "de cabeca".
+              const isActiveChart = item.activeId === watchingAssetId && item.strategyId === strategyMode;
               return (
                 <button
                   key={key}
@@ -1125,6 +1145,8 @@ export function ChartPage() {
                     loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
                   }}
                   className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
+                    isActiveChart ? 'ring-2 ring-sky-400' : ''
+                  } ${
                     isCancelled
                       ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
                       : item.progress.readyNow
@@ -1138,6 +1160,7 @@ export function ChartPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate">
+                      {isActiveChart && <span className="mr-1.5 text-sky-400" title="Grafico aberto na tela">📍</span>}
                       {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
                       {!isCancelled && item.progress.direction && (
                         <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
