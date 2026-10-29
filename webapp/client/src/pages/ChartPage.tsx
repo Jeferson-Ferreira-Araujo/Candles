@@ -393,6 +393,22 @@ export function ChartPage() {
     return () => clearInterval(id);
   }, []);
 
+  // Rede de seguranca independente do WebSocket: o recalculo normal dos marcadores do grafico
+  // (markers de confirmacao, "ENTRADA AGORA") depende de ver um evento CANDLE_CLOSED do ativo
+  // certo chegar como o MAIS RECENTE em `events` (ver efeito abaixo) — se esse evento especifico
+  // se perder (reconexao do WS, ou uma rajada de eventos de OUTROS ativos vigiados chegando
+  // logo depois dele, empurrando-o pra fora da posicao [0] antes do React re-renderizar), o
+  // grafico aberto fica "preso" num estagio antigo indefinidamente, so se corrigindo no PROXIMO
+  // fechamento de vela que tiver sorte de chegar isolado. Esse intervalo reconsulta o progresso
+  // periodicamente (mesmo endpoint, mesmos parametros) como reforco — se nada mudou, e so uma
+  // chamada extra; se algo tinha ficado pra tras, se autocorrige em no maximo 15s.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (watchingAssetIdRef.current !== null) checkPendingSignal();
+    }, 15000);
+    return () => clearInterval(id);
+  }, [checkPendingSignal]);
+
   // Analise inicial automatica — so uma vez, assim que a lista de ativos chega.
   useEffect(() => {
     if (assets.length === 0 || scanStartedRef.current) return;
@@ -669,6 +685,14 @@ export function ChartPage() {
       text: `${order.status}${pnlText}`,
     });
   }
+  // A biblioteca do grafico (lightweight-charts) exige os marcadores em ordem CRESCENTE de
+  // tempo — aqui eles sao empilhados fora dessa ordem (o de "ENTRADA AGORA" usa o tempo da vela
+  // AO VIVO, mais recente que as velas de confirmacao ja fechadas empilhadas depois dele; as
+  // marcacoes de ordens tambem entram no fim, com tempos arbitrarios). Sem ordenar aqui, uma
+  // lista fora de ordem podia fazer a biblioteca rejeitar o conjunto INTEIRO de marcadores
+  // silenciosamente — nao so o que estava fora de ordem — deixando o grafico sem NENHUM
+  // indicativo mesmo com dados corretos chegando do servidor.
+  markers.sort((a, b) => a.time - b.time);
   const currentPrice = liveCandle?.close ?? candles[candles.length - 1]?.close ?? null;
 
   // Uma linha por entrada, pro grafico desenhar todas simultaneamente.
