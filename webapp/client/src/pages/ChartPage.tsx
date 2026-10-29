@@ -78,6 +78,13 @@ function formatCountdown(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/** CALL se a vela (ainda formando ou ja fechada) esta verde ate agora, PUT se vermelha, null se doji. */
+function liveCandleDirection(c: Candle): Direction | null {
+  if (c.close > c.open) return 'CALL';
+  if (c.close < c.open) return 'PUT';
+  return null;
+}
+
 /** Entrada manual que acabou de ser enviada — acompanhada em tempo real no grafico ate resolver. */
 interface ActiveOrder {
   signalId: string;
@@ -162,6 +169,11 @@ export function ChartPage() {
   strategyModeRef.current = strategyMode;
   const scanStartedRef = useRef(false);
   const chartRef = useRef<CandleChartHandle>(null);
+  // Timer do recalculo com folga de 2s apos um fechamento de vela (ver efeito de CANDLE_CLOSED
+  // abaixo) — fica numa ref, NAO num `return () => clearTimeout(...)` do proprio efeito, porque
+  // esse efeito reroda a cada evento (inclusive tick de preco ao vivo), o que cancelava o timer
+  // antes dele disparar.
+  const candleCloseRecheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // So da pra checar progresso pra estrategias classicas (o padrao customizado tem seu proprio
   // aviso ao vivo via LiveMonitorService, quando esta entre os ativos monitorados). Busca o
@@ -432,20 +444,40 @@ export function ChartPage() {
     // sem ela, o proprio grafico aberto podia, por um instante, "esquecer" a confirmacao que
     // acabou de fechar (corretora ainda indexando a vela no historico) e so recuperar o
     // marcador dela no PROXIMO fechamento.
+    //
+    // BUG CORRIGIDO: o timer NAO pode ser limpo via `return () => clearTimeout(timer)` deste
+    // efeito, porque este efeito reroda a cada evento novo em `events` — inclusive CANDLE_UPDATED
+    // (tick de preco ao vivo, que chega varias vezes por segundo). Cada um desses ticks fazia o
+    // React rodar a limpeza do efeito ANTERIOR antes de rodar este, cancelando o timer de 2s que
+    // tinha acabado de ser armado — na pratica, como sempre chega um tick antes dos 2s passarem,
+    // o recalculo apos um fechamento de vela NUNCA rodava de verdade, e os marcadores do grafico
+    // ficavam presos no ultimo calculo que conseguiu completar (por isso a lista de vigilancia,
+    // que usa um timer independente no servidor, avancava e o grafico aberto nao). O timer agora
+    // mora numa ref que so e limpa explicitamente (fechamento novo de verdade, ou desmontagem),
+    // nunca pelo ciclo de vida automatico do efeito.
     const assetId = watchingAssetIdRef.current;
     if (assetId === null) return;
-    const timer = setTimeout(() => {
+    if (candleCloseRecheckTimerRef.current !== null) clearTimeout(candleCloseRecheckTimerRef.current);
+    candleCloseRecheckTimerRef.current = setTimeout(() => {
+      candleCloseRecheckTimerRef.current = null;
       resolveStrategy(assetId, daysRef.current, strategyModeRef.current)
         .then((result) => {
           setBest(result);
-          checkPendingSignal(result, assetId);
+          checkPendingSignal(result, assetId, daysRef.current);
         })
         .catch(() => {
           // falha ao recalcular nao deve derrubar a tela — mantem o placar anterior
         });
     }, 2000);
-    return () => clearTimeout(timer);
   }, [events, checkPendingSignal]);
+
+  // Desmontagem da tela: cancela qualquer recalculo ainda pendente (ver efeito acima) pra nao
+  // chamar setState depois que o componente ja saiu.
+  useEffect(() => {
+    return () => {
+      if (candleCloseRecheckTimerRef.current !== null) clearTimeout(candleCloseRecheckTimerRef.current);
+    };
+  }, []);
 
   // Resultado de QUALQUER entrada manual em acompanhamento: WIN/LOSS/DOJI chegam via evento
   // (emitidos pelo OrderService quando pollForResolution confirma o fechamento na corretora),
@@ -1144,14 +1176,26 @@ export function ChartPage() {
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
             {sortedWatchlist.map(([key, item]) => {
               const isCancelled = item.cancelledAt !== undefined;
+              const isActiveChartRow = item.activeId === watchingAssetId && item.strategyId === strategyMode;
+              // So pro par que esta de fato aberto no grafico a gente TEM a vela ao vivo (preco
+              // tick a tick) pra saber se ela esta indo a favor ou contra a direcao esperada —
+              // pros demais da lista (vigiados so em segundo plano, sem assinatura de preco
+              // aberta) nao da pra saber isso sem assinar TODOS eles, entao continuam so com a
+              // estimativa por tempo decorrido.
+              const liveDir = isActiveChartRow && liveCandle ? liveCandleDirection(liveCandle) : null;
+              const formingAgainstPattern =
+                !item.progress.readyNow && item.progress.direction !== null && liveDir !== null && liveDir !== item.progress.direction;
               // 100% = pronta pra entrar na proxima vela. Entre uma confirmacao e a proxima, a
               // barra agora cresce SUAVEMENTE a cada segundo conforme a vela atual vai se
               // formando (em vez de ficar parada ate o fechamento e so entao pular pro proximo
               // degrau) — usa o mesmo relogio de parede do contador de entrada, nunca passa do
               // teto do proximo degrau (90% do caminho ate ele) pra nao sugerir confirmacao que
-              // ainda nao aconteceu de verdade.
+              // ainda nao aconteceu de verdade. Se a vela ao vivo do grafico aberto ja esta
+              // formando NA DIRECAO CONTRARIA da esperada, a barra para de crescer (fica so no
+              // ultimo degrau confirmado) em vez de seguir subindo rumo a um 3o sinal que a
+              // propria vela atual ja esta desmentindo.
               const stepSize = 100 / item.progress.totalStages;
-              const elapsedFraction = Math.min(1, (60 - secondsToMinuteClose) / 60);
+              const elapsedFraction = formingAgainstPattern ? 0 : Math.min(1, (60 - secondsToMinuteClose) / 60);
               const percent =
                 isCancelled || item.progress.readyNow
                   ? 100
@@ -1163,10 +1207,6 @@ export function ChartPage() {
                     ? 'bg-emerald-400'
                     : 'bg-rose-400'
                   : 'bg-sky-500';
-              // Par ativo+estrategia que esta de fato aberto no grafico agora — pra deixar
-              // visivelmente marcado qual linha da lista corresponde a tela que o usuario esta
-              // olhando, sem precisar comparar nome de ativo "de cabeca".
-              const isActiveChart = item.activeId === watchingAssetId && item.strategyId === strategyMode;
               return (
                 <button
                   key={key}
@@ -1176,7 +1216,7 @@ export function ChartPage() {
                     loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
                   }}
                   className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
-                    isActiveChart ? 'ring-2 ring-sky-400' : ''
+                    isActiveChartRow ? 'ring-2 ring-sky-400' : ''
                   } ${
                     isCancelled
                       ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
@@ -1191,7 +1231,7 @@ export function ChartPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate">
-                      {isActiveChart && <span className="mr-1.5 text-sky-400" title="Grafico aberto na tela">📍</span>}
+                      {isActiveChartRow && <span className="mr-1.5 text-sky-400" title="Grafico aberto na tela">📍</span>}
                       {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
                       {!isCancelled && item.progress.direction && (
                         <span className={`ml-2 font-semibold ${item.progress.direction === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -1204,11 +1244,16 @@ export function ChartPage() {
                         ? '❌ Não entre'
                         : item.progress.readyNow
                           ? `Entrada em ${secondsToMinuteClose}s`
-                          : `${item.progress.stage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
+                          : formingAgainstPattern
+                            ? `${item.progress.stage}ª confirmação de ${item.progress.totalStages} · vela atual contra`
+                            : `${item.progress.stage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${percent}%` }} />
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${formingAgainstPattern ? 'bg-amber-500' : barColor}`}
+                      style={{ width: `${percent}%` }}
+                    />
                   </div>
                 </button>
               );
