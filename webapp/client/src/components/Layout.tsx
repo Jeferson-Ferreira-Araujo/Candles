@@ -5,11 +5,15 @@ import { Header } from './Header.js';
 import { api } from '../api.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
-// So o Grafico aparece no menu agora (pedido explicito do usuario: o app tinha ficado
-// complexo demais). As demais telas (Monitor, Padrao, Descobrir, Classicas, Validacao 30D,
-// Operacoes, Configuracoes, Logs) CONTINUAM existindo e acessiveis por URL direta — so nao
-// tem mais link na barra lateral. Ver App.tsx pras rotas completas.
-const NAV_ITEMS = [{ to: '/', label: 'Gráfico', hint: 'Tempo real', icon: '📊' }];
+// So Grafico e Historico aparecem no menu (pedido explicito do usuario: o app tinha ficado
+// complexo demais, mas precisa poder consultar as entradas ja feitas). As demais telas
+// (Monitor, Padrao, Descobrir, Classicas, Validacao 30D, Configuracoes, Logs) CONTINUAM
+// existindo e acessiveis por URL direta — so nao tem mais link na barra lateral. Ver App.tsx
+// pras rotas completas.
+const NAV_ITEMS = [
+  { to: '/', label: 'Gráfico', hint: 'Tempo real', icon: '📊' },
+  { to: '/operations', label: 'Histórico', hint: 'Entradas já feitas', icon: '📋' },
+];
 
 interface LayoutProps {
   requiresLogin: boolean;

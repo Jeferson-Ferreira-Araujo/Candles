@@ -55,6 +55,10 @@ interface ActiveOrder {
   payoutPercentage: number | null;
   status: 'OPEN' | 'WIN' | 'LOSS' | 'DOJI';
   pnl?: number;
+  /** epoch ms (Date.now(), nao epoch seconds como expiresAt) — quando o resultado chegou.
+   * So controla quanto tempo a entrada ainda aparece na FAIXA de status (ver visibleBannerOrders);
+   * a linha no grafico e o marcador WIN/LOSS continuam ate a proxima entrada, independente disso. */
+  resolvedAt?: number;
 }
 
 async function resolveStrategy(assetId: number, days: number, mode: StrategyMode): Promise<BestStrategyResult | null> {
@@ -102,10 +106,6 @@ export function ChartPage() {
   // 2+ entradas simultaneas no mesmo ativo sao permitidas (cliques repetidos em Comprar/Vender
   // acumulam, nao substituem) — por isso e uma LISTA, nao uma entrada so.
   const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
-  // Controla so a faixa de status (preco/contagem/lucro-prejuizo) acima do grafico — some
-  // sozinha um tempo depois do resultado chegar, sem apagar a linha tracejada nem o marcador
-  // WIN/LOSS no candle (esses continuam ate a proxima entrada, sao o "registro" da operacao).
-  const [orderBannerVisible, setOrderBannerVisible] = useState(false);
   const [resultToast, setResultToast] = useState<{ status: 'WIN' | 'LOSS' | 'DOJI'; pnl?: number } | null>(null);
   const [now, setNow] = useState(() => new Date());
   // Chave composta `activeId:strategyId` — agora vigiamos TODOS os ativos x TODAS as
@@ -362,21 +362,13 @@ export function ChartPage() {
     const matched = activeOrders.find((o) => o.signalId === payload.signalId && o.status === 'OPEN');
     if (!matched) return;
     const status = last.type as 'WIN' | 'LOSS' | 'DOJI';
-    setActiveOrders((prev) => prev.map((o) => (o.signalId === payload.signalId ? { ...o, status, pnl: payload.pnl } : o)));
+    setActiveOrders((prev) =>
+      prev.map((o) => (o.signalId === payload.signalId ? { ...o, status, pnl: payload.pnl, resolvedAt: Date.now() } : o))
+    );
     // Aviso igual ao do site oficial: o resultado chega so quando a corretora confirma (poll
     // em segundo plano), entao sem isso o usuario so saberia pelo proprio app da Polarium.
     setResultToast({ status, pnl: payload.pnl });
   }, [events, activeOrders]);
-
-  // Esconde a FAIXA de status (preco/contagem/lucro-prejuizo) um tempo depois da ULTIMA entrada
-  // aberta resolver — a linha tracejada no grafico e os marcadores WIN/LOSS continuam (ficam
-  // como registro ate a proxima entrada), so essa faixa em cima some sozinha. So dispara quando
-  // TODAS as entradas abertas ja tem resultado (nenhuma ainda em 'OPEN').
-  useEffect(() => {
-    if (activeOrders.length === 0 || activeOrders.some((o) => o.status === 'OPEN')) return;
-    const id = setTimeout(() => setOrderBannerVisible(false), 8000);
-    return () => clearTimeout(id);
-  }, [activeOrders]);
 
   // Fecha o aviso de resultado sozinho depois de um tempo — nao fica preso na tela.
   useEffect(() => {
@@ -473,7 +465,6 @@ export function ChartPage() {
               status: 'OPEN',
             },
           ]);
-          setOrderBannerVisible(true);
         }
       } else {
         setOrderStatus('blocked');
@@ -520,15 +511,24 @@ export function ChartPage() {
     result: o.status === 'OPEN' ? null : o.status,
   }));
 
+  // A FAIXA de status so mostra entradas em andamento — uma vez resolvida, fica mais uns
+  // segundos exibindo o resultado (pra dar tempo de ler) e depois SOME da lista sozinha,
+  // mesmo com outras entradas ainda abertas ao lado. A linha no grafico e o marcador WIN/LOSS
+  // nao dependem disso — continuam vindo de `activeOrders` inteiro, ate a proxima entrada.
+  const BANNER_GRACE_MS = 8000;
+  const visibleBannerOrders = activeOrders.filter(
+    (o) => o.status === 'OPEN' || (o.resolvedAt !== undefined && now.getTime() - o.resolvedAt < BANNER_GRACE_MS)
+  );
+
   // Totais agregados — "quanto tenho em jogo", "quanto ganho se tudo der WIN", "quanto ja
-  // realizei" — somando TODAS as entradas abertas no ativo atual, nao so a ultima.
-  const openOrders = activeOrders.filter((o) => o.status === 'OPEN');
+  // realizei" — somando as entradas ainda visiveis na faixa, nao todo o historico da sessao.
+  const openOrders = visibleBannerOrders.filter((o) => o.status === 'OPEN');
   const totalOpenAmount = openOrders.reduce((sum, o) => sum + o.amount, 0);
   const totalEstimatedGain = openOrders.reduce(
     (sum, o) => sum + (o.payoutPercentage !== null ? o.amount * o.payoutPercentage : 0),
     0
   );
-  const totalRealizedPnl = activeOrders
+  const totalRealizedPnl = visibleBannerOrders
     .filter((o) => o.status !== 'OPEN' && o.pnl !== undefined)
     .reduce((sum, o) => sum + (o.pnl ?? 0), 0);
 
@@ -858,11 +858,11 @@ export function ChartPage() {
           vigente — ate o resultado real (WIN/LOSS/DOJI) chegar da corretora. Com 2+ entradas,
           uma linha de totais soma tudo (valor em jogo, ganho/perda potencial, resultado ja
           realizado) alem do detalhe de cada uma. */}
-      {activeOrders.length > 0 && orderBannerVisible && (
+      {visibleBannerOrders.length > 0 && (
         <div className="px-3 sm:px-6 py-1.5 text-xs border-b border-slate-800 bg-slate-900 text-slate-300 space-y-1">
-          {activeOrders.length > 1 && (
+          {visibleBannerOrders.length > 1 && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-bold pb-1 border-b border-slate-700/60">
-              <span>{activeOrders.length} entradas</span>
+              <span>{visibleBannerOrders.length} entradas</span>
               {openOrders.length > 0 && (
                 <>
                   <span>
@@ -872,7 +872,7 @@ export function ChartPage() {
                   <span className="text-rose-400">Perda total se tudo LOSS: -{formatMoney(totalOpenAmount)}</span>
                 </>
               )}
-              {activeOrders.some((o) => o.status !== 'OPEN') && (
+              {visibleBannerOrders.some((o) => o.status !== 'OPEN') && (
                 <span className={totalRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                   Resultado total: {totalRealizedPnl >= 0 ? `+${formatMoney(totalRealizedPnl)}` : formatMoney(totalRealizedPnl)}
                 </span>
@@ -880,7 +880,7 @@ export function ChartPage() {
             </div>
           )}
 
-          {activeOrders.map((order) => {
+          {visibleBannerOrders.map((order) => {
             const secondsToExpiry = order.expiresAt - Math.floor(now.getTime() / 1000);
             const isInProfitNow =
               currentPrice !== null
