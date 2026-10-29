@@ -28,6 +28,18 @@ function sameProgress(a: StrategyProgress | null, b: StrategyProgress | null): b
   return a.stage === b.stage && a.totalStages === b.totalStages && a.readyNow === b.readyNow && a.direction === b.direction;
 }
 
+// So aparece na lista quando faltam no MAXIMO 2 confirmacoes pra completar (incluindo a que
+// fica pronta) — decisao explicita do usuario: a 1a confirmacao sozinha "sempre parece que vai
+// comecar uma coisa" e e ruido demais numa estrategia de 5 estagios, por exemplo so entra na
+// lista a partir da 3a (5-2); ja uma de 2 estagios mostra desde a 1a, porque 2-2=0 ja cobre
+// tudo. O GRAFICO aberto continua mostrando TODAS as velas contadas, desde a 1a — esse limite e
+// so pra essa lista de vigilancia, que precisa ser "bem certeira", nao pro grafico em si.
+const MAX_REMAINING_STAGES_TO_SHOW = 2;
+
+function isVisibleInWatchlist(progress: StrategyProgress | null): progress is StrategyProgress {
+  return progress !== null && progress.totalStages - progress.stage <= MAX_REMAINING_STAGES_TO_SHOW;
+}
+
 /**
  * Fica de olho, em segundo plano, num punhado de pares ATIVO+ESTRATEGIA especificos (hoje: os
  * do ranking da ultima verificacao, ver POST /api/watchlist) — assina as velas ao vivo de cada
@@ -126,7 +138,10 @@ export class WatchlistWatcher {
     for (const entry of entries) {
       const key = `${activeId}:${entry.strategyId}`;
       const strategy = defaultClassicStrategyConfig(entry.strategyId);
-      const progress = detectStrategyProgress(candles, strategy);
+      const rawProgress = detectStrategyProgress(candles, strategy);
+      // Abaixo do limiar de visibilidade conta como "nada" PRA ESSA LISTA — fica so no detector
+      // de verdade (chart) e no `lastProgress` interno, nunca chega a avisar o cliente.
+      const progress = isVisibleInWatchlist(rawProgress) ? rawProgress : null;
       const last = this.lastProgress.get(key);
       const isFirstCheck = !this.lastProgress.has(key);
 
