@@ -56,6 +56,9 @@ export interface BrokerHistoryPosition {
   invest: number | null;
   openTime: number | null; // epoch ms
   closeTime: number | null; // epoch ms
+  /** Preco do ativo no momento da entrada/fechamento — da pra desenhar no grafico igual ao site oficial. */
+  openQuote: number | null;
+  closeQuote: number | null;
   /** Lucro/prejuizo real da posicao ja fechada, na moeda da conta. */
   pnlRealized: number | null;
   /** Derivado de pnlRealized (>0 WIN, <0 LOSS, ===0 DOJI) — null se a posicao nao tem pnlRealized ainda. */

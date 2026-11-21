@@ -16,6 +16,7 @@ interface MockOrderState {
   resolution: BrokerOrderResolution | null;
   requestedAt: number; // epoch ms — usado so por getPositionsHistory (historico simulado)
   resolvedAt: number | null;
+  closeQuote: number | null;
 }
 
 export interface MockBrokerConfig {
@@ -84,6 +85,7 @@ export class MockBrokerAdapter implements BrokerAdapter {
         const pnl = result === 'WIN' ? order.amount * this.config.payout : result === 'LOSS' ? -order.amount : 0;
         order.resolution = { result, pnl, payoutPercentage: this.config.payout };
         order.resolvedAt = Date.now();
+        order.closeQuote = closedCandle.close;
         this.balance += pnl;
         this.orders.set(orderId, order);
       }
@@ -143,6 +145,7 @@ export class MockBrokerAdapter implements BrokerAdapter {
       resolution: null,
       requestedAt: Date.now(),
       resolvedAt: null,
+      closeQuote: null,
     });
     this.balance -= params.amount;
     return { brokerOrderId };
@@ -177,6 +180,8 @@ export class MockBrokerAdapter implements BrokerAdapter {
         result: order.resolution.result,
         balanceType: 'demo',
         currency: 'USD',
+        openQuote: order.openCandle?.close ?? null,
+        closeQuote: order.closeQuote,
       });
     }
     return out;

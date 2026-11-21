@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, BrokerHistoryPosition, OrderRecord, Settings } from '@polarium12c/shared';
 import { api } from '../api.js';
+import type { HistoricalEntryTarget } from './ChartPage.js';
 
 const STATUS_STYLES: Record<OrderRecord['status'], string> = {
   REQUESTED: 'bg-slate-700 text-slate-200',
@@ -20,6 +21,7 @@ const RESULT_STYLES: Record<string, string> = {
 const REAL_HISTORY_DAYS_OPTIONS = [1, 7, 30, 90];
 
 export function OperationsPage() {
+  const navigate = useNavigate();
   const { settings } = useOutletContext<{ events: AppEvent[]; settings: Settings | null; refreshHeader: () => Promise<void> }>();
   const [orders, setOrders] = useState<OrderRecord[] | null>(null);
   const [assets, setAssets] = useState<AssetInfo[]>([]);
@@ -122,6 +124,7 @@ export function OperationsPage() {
           loading={realHistoryLoading}
           error={realHistoryError}
           nameOf={nameOf}
+          onOpenInChart={(target) => navigate('/', { state: { historicalEntry: target } })}
         />
       ) : (
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 overflow-x-auto">
@@ -183,6 +186,7 @@ interface RealHistorySectionProps {
   loading: boolean;
   error: string | null;
   nameOf: (activeId: number) => string;
+  onOpenInChart: (target: HistoricalEntryTarget) => void;
 }
 
 /** Formata um valor na moeda informada pela PROPRIA posicao (nunca fixo em BRL — a conta pode
@@ -200,7 +204,7 @@ function formatByCurrency(value: number, currency: string | null): string {
  * (ver /api/real-history e BrokerAdapter.getPositionsHistory) — nao depende do nosso banco,
  * entao continua mostrando o que de fato aconteceu mesmo que o servidor tenha ficado fora do
  * ar num periodo (foi exatamente o caso encontrado: o registro local ficou praticamente vazio). */
-function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf }: RealHistorySectionProps) {
+function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf, onOpenInChart }: RealHistorySectionProps) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-sm">
@@ -255,6 +259,7 @@ function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf }
           <table className="w-full text-sm min-w-[720px]">
             <thead>
               <tr className="text-left text-slate-400 border-b border-slate-800">
+                <th className="py-2 pr-4">Aberta em</th>
                 <th className="py-2 pr-4">Fechada em</th>
                 <th className="py-2 pr-4">Conta</th>
                 <th className="py-2 pr-4">Ativo</th>
@@ -265,19 +270,51 @@ function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf }
               </tr>
             </thead>
             <tbody>
-              {data.positions.map((p) => (
-                <tr key={p.externalId} className="border-b border-slate-900">
-                  <td className="py-1.5 pr-4 text-slate-400 whitespace-nowrap">
-                    {p.closeTime ? new Date(p.closeTime).toLocaleString('pt-BR') : '—'}
-                  </td>
-                  <td className="py-1.5 pr-4 text-slate-400">{BALANCE_TYPE_LABEL[p.balanceType ?? ''] ?? p.balanceType ?? '—'}</td>
-                  <td className="py-1.5 pr-4">{nameOf(p.activeId)}</td>
-                  <td className="py-1.5 pr-4">{p.direction ?? '—'}</td>
-                  <td className="py-1.5 pr-4">{p.invest !== null ? formatByCurrency(p.invest, p.currency) : '—'}</td>
-                  <td className={`py-1.5 pr-4 font-medium ${p.result ? RESULT_STYLES[p.result] : 'text-slate-600'}`}>{p.result ?? '—'}</td>
-                  <td className="py-1.5 pr-4">{p.pnlRealized !== null ? formatByCurrency(p.pnlRealized, p.currency) : '—'}</td>
-                </tr>
-              ))}
+              {data.positions.map((p) => {
+                // So da pra abrir no grafico se tivermos os 2 precos E os 2 horarios — sem
+                // algum deles nao da pra desenhar a linha da entrada nem achar a vela certa.
+                const canOpenInChart =
+                  p.direction !== null &&
+                  p.openQuote !== null &&
+                  p.closeQuote !== null &&
+                  p.openTime !== null &&
+                  p.closeTime !== null;
+                const openHandler = canOpenInChart
+                  ? () =>
+                      onOpenInChart({
+                        activeId: p.activeId,
+                        direction: p.direction!,
+                        openTime: p.openTime!,
+                        closeTime: p.closeTime!,
+                        openQuote: p.openQuote!,
+                        closeQuote: p.closeQuote!,
+                        result: p.result,
+                        pnlRealized: p.pnlRealized,
+                        invest: p.invest,
+                      })
+                  : undefined;
+                return (
+                  <tr
+                    key={p.externalId}
+                    onClick={openHandler}
+                    className={`border-b border-slate-900 ${canOpenInChart ? 'cursor-pointer hover:bg-slate-800/60' : ''}`}
+                    title={canOpenInChart ? 'Ver no gráfico' : undefined}
+                  >
+                    <td className="py-1.5 pr-4 text-slate-400 whitespace-nowrap">
+                      {p.openTime ? new Date(p.openTime).toLocaleString('pt-BR') : '—'}
+                    </td>
+                    <td className="py-1.5 pr-4 text-slate-400 whitespace-nowrap">
+                      {p.closeTime ? new Date(p.closeTime).toLocaleString('pt-BR') : '—'}
+                    </td>
+                    <td className="py-1.5 pr-4 text-slate-400">{BALANCE_TYPE_LABEL[p.balanceType ?? ''] ?? p.balanceType ?? '—'}</td>
+                    <td className="py-1.5 pr-4">{nameOf(p.activeId)}</td>
+                    <td className="py-1.5 pr-4">{p.direction ?? '—'}</td>
+                    <td className="py-1.5 pr-4">{p.invest !== null ? formatByCurrency(p.invest, p.currency) : '—'}</td>
+                    <td className={`py-1.5 pr-4 font-medium ${p.result ? RESULT_STYLES[p.result] : 'text-slate-600'}`}>{p.result ?? '—'}</td>
+                    <td className="py-1.5 pr-4">{p.pnlRealized !== null ? formatByCurrency(p.pnlRealized, p.currency) : '—'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

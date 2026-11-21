@@ -377,6 +377,8 @@ export class PolariumAdapter implements BrokerAdapter {
         invest: p.invest ?? null,
         openTime: p.openTime?.getTime() ?? null,
         closeTime: p.closeTime?.getTime() ?? null,
+        openQuote: p.openQuote ?? null,
+        closeQuote: p.closeQuote ?? null,
         pnlRealized,
         result: pnlRealized === null ? null : pnlRealized > 0 ? 'WIN' : pnlRealized < 0 ? 'LOSS' : 'DOJI',
         balanceType: balance?.type ?? null,

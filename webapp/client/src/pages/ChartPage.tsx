@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import type { AppEvent, AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
+import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
+import type { AppEvent, AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings, TradeResult } from '@polarium12c/shared';
 import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
 import { api, type AssetScanRanking, type WatchlistEntry } from '../api.js';
 import {
@@ -29,6 +29,21 @@ const SCAN_DAYS = 1; // periodo curto de proposito: a varredura roda em TODOS os
 // entrada em si so e exibido se, numa checagem feita JA dentro da janela, o servidor confirmar
 // que continua pronto — "nao provou, nao indica entrada".
 const ENTRY_CONFIRM_WINDOW_SECONDS = 10;
+
+/** Dados de UMA posicao do historico REAL (corretora) necessarios pra abrir o grafico naquele
+ * ponto exato e desenhar a linha de entrada + marcador de resultado — ver OperationsPage
+ * (aba "Real (corretora)", clique na linha) e o efeito que le `location.state` abaixo. */
+export interface HistoricalEntryTarget {
+  activeId: number;
+  direction: Direction;
+  openTime: number; // epoch ms
+  closeTime: number; // epoch ms
+  openQuote: number;
+  closeQuote: number;
+  result: TradeResult | null;
+  pnlRealized: number | null;
+  invest: number | null;
+}
 
 /** Mesma forma do StrategyProgress do servidor (ver server/src/strategies/classicStrategies.ts)
  * — quanto do setup ja esta em pe pra um par ativo+estrategia vigiado. */
@@ -140,6 +155,11 @@ async function resolveStrategy(assetId: number, days: number, mode: StrategyMode
  * nenhuma, so monitora e sugere — quem decide e executa e sempre o usuario.
  */
 export function ChartPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Entrada do historico REAL (corretora) que o usuario clicou em Operacoes — guardada numa ref
+  // (nao state) pra sobreviver ate as velas certas carregarem, sem disparar re-render sozinha.
+  const pendingHistoricalEntryRef = useRef<HistoricalEntryTarget | null>(null);
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [days, setDays] = useState(SCAN_DAYS);
@@ -473,6 +493,59 @@ export function ChartPage() {
     }, 15000);
     return () => clearInterval(id);
   }, [checkPendingSignal]);
+
+  // Abertura vinda de Operacoes → aba "Real (corretora)" (clique numa linha do historico) — ver
+  // HistoricalEntryTarget. So roda uma vez, ao montar: guarda o alvo numa ref e dispara o
+  // carregamento do ativo certo, com dias suficientes pra incluir a data da entrada. Marca
+  // `scanStartedRef` cedo pra a varredura automatica (efeito logo abaixo) NAO atropelar isso.
+  useEffect(() => {
+    const target = (location.state as { historicalEntry?: HistoricalEntryTarget } | null)?.historicalEntry;
+    if (!target) return;
+    scanStartedRef.current = true;
+    pendingHistoricalEntryRef.current = target;
+    const daysNeeded = Math.min(90, Math.max(SCAN_DAYS, Math.ceil((Date.now() - target.openTime) / (24 * 60 * 60 * 1000)) + 2));
+    setDays(daysNeeded);
+    setStrategyMode('auto');
+    loadChartFor(target.activeId, 'auto', daysNeeded);
+    // Consome o state de navegacao — sem isso, um F5 ou "voltar" do navegador reabriria a mesma
+    // entrada de novo (o historico de navegacao guarda o state).
+    navigate('.', { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Assim que as velas do ativo certo chegarem, desenha a entrada historica: uma linha no preco
+  // de entrada (mesma infraestrutura das ordens ao vivo, ver activeOrderLines) + marcador de
+  // WIN/LOSS na vela de fechamento, e centraliza o grafico nesse ponto do tempo (mesmo padrao
+  // de goToResultIndex, so que vindo de fora em vez de navegar ocorrencia por ocorrencia).
+  useEffect(() => {
+    const target = pendingHistoricalEntryRef.current;
+    if (!target || candles.length === 0) return;
+    pendingHistoricalEntryRef.current = null;
+
+    const openSec = Math.floor(target.openTime / 1000);
+    const closeSec = Math.floor(target.closeTime / 1000);
+    setActiveOrders((prev) => [
+      ...prev,
+      {
+        signalId: `HIST-${target.activeId}-${openSec}`,
+        direction: target.direction,
+        entryPrice: target.openQuote,
+        expiresAt: closeSec,
+        amount: target.invest ?? 0,
+        payoutPercentage: null,
+        status: target.result ?? 'OPEN',
+        pnl: target.pnlRealized ?? undefined,
+        resolvedAt: 0, // bem antigo de proposito — nao aparece na faixa de status, so no grafico
+      },
+    ]);
+
+    const centerIdx = candles.findIndex((c) => c.from >= openSec);
+    if (centerIdx !== -1 && chartRef.current) {
+      const fromCandle = candles[Math.max(0, centerIdx - 20)]!;
+      const toCandle = candles[Math.min(candles.length - 1, centerIdx + 10)]!;
+      chartRef.current.setVisibleRange(fromCandle.from, toCandle.to);
+    }
+  }, [candles]);
 
   // Analise inicial automatica — so uma vez, assim que a lista de ativos chega.
   useEffect(() => {
