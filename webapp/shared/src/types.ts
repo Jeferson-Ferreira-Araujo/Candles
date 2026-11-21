@@ -2,6 +2,11 @@
 // Nenhum tipo aqui deve conter logica de negocio — apenas formas de dados.
 
 export const CANDLE_SIZE_M1 = 60;
+// Timeframes extras, so pra VISUALIZACAO (ex.: reabrir uma entrada do historico real e comparar
+// com mais/menos tempo ao redor) — nenhuma estrategia roda nelas, so o M1 e analisado de verdade,
+// que e o timeframe em que as entradas sao feitas.
+export const CANDLE_SIZE_M5 = 300;
+export const CANDLE_SIZE_M15 = 900;
 
 /** Candle OHLC. `from`/`to` sao timestamps Unix em segundos (alinhados ao SDK Quadcode). */
 export interface Candle {

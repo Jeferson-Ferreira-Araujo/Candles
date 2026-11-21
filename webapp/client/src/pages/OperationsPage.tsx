@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AssetInfo, BrokerHistoryPosition, OrderRecord, Settings } from '@polarium12c/shared';
 import { api } from '../api.js';
-import type { HistoricalEntryTarget } from './ChartPage.js';
+import { HistoricalEntryModal, type HistoricalEntryTarget } from '../components/HistoricalEntryModal.js';
 
 const STATUS_STYLES: Record<OrderRecord['status'], string> = {
   REQUESTED: 'bg-slate-700 text-slate-200',
@@ -21,11 +21,13 @@ const RESULT_STYLES: Record<string, string> = {
 const REAL_HISTORY_DAYS_OPTIONS = [1, 7, 30, 90];
 
 export function OperationsPage() {
-  const navigate = useNavigate();
   const { settings } = useOutletContext<{ events: AppEvent[]; settings: Settings | null; refreshHeader: () => Promise<void> }>();
   const [orders, setOrders] = useState<OrderRecord[] | null>(null);
   const [assets, setAssets] = useState<AssetInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Entrada do historico real aberta no modal "ver no grafico" (ver HistoricalEntryModal) — null
+  // = modal fechado. Fica no OperationsPage (nao na tela Grafico) pra abrir SEM trocar de aba.
+  const [historyModalTarget, setHistoryModalTarget] = useState<{ target: HistoricalEntryTarget; assetName: string } | null>(null);
   // "local" = tabela de baixo, lida do NOSSO banco (so existe se o servidor estava de pe no
   // momento exato da entrada). "real" = historico de verdade, puxado DIRETO da corretora via
   // BrokerAdapter.getPositionsHistory — nunca depende do nosso banco, serve de auditoria.
@@ -124,7 +126,7 @@ export function OperationsPage() {
           loading={realHistoryLoading}
           error={realHistoryError}
           nameOf={nameOf}
-          onOpenInChart={(target) => navigate('/', { state: { historicalEntry: target } })}
+          onOpenInChart={(target) => setHistoryModalTarget({ target, assetName: nameOf(target.activeId) })}
         />
       ) : (
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 overflow-x-auto">
@@ -172,6 +174,14 @@ export function OperationsPage() {
           </table>
         )}
       </div>
+      )}
+
+      {historyModalTarget && (
+        <HistoricalEntryModal
+          target={historyModalTarget.target}
+          assetName={historyModalTarget.assetName}
+          onClose={() => setHistoryModalTarget(null)}
+        />
       )}
     </div>
   );
@@ -291,6 +301,7 @@ function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf, 
                         result: p.result,
                         pnlRealized: p.pnlRealized,
                         invest: p.invest,
+                        currency: p.currency,
                       })
                   : undefined;
                 return (

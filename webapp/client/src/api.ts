@@ -239,8 +239,8 @@ export const api = {
 
   getAssets: () => req('/api/assets').then((r) => json<AssetInfo[]>(r)),
 
-  getCandles: (activeId: number, days: number) =>
-    req(`/api/candles?activeId=${activeId}&days=${days}`).then((r) => json<Candle[]>(r)),
+  getCandles: (activeId: number, days: number, size?: number) =>
+    req(`/api/candles?activeId=${activeId}&days=${days}${size ? `&size=${size}` : ''}`).then((r) => json<Candle[]>(r)),
 
   watchChartAsset: (activeId: number) =>
     req('/api/chart-stream', {
