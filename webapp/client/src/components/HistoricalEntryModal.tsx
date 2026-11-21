@@ -92,31 +92,26 @@ export function HistoricalEntryModal({ target, assetName, onClose }: Props) {
     chartRef.current.setVisibleRange(fromCandle.from, toCandle.to);
   }, [candles, target.openTime]);
 
-  const openSec = Math.floor(target.openTime / 1000);
   const closeSec = Math.floor(target.closeTime / 1000);
-  const activeOrders: ActiveOrderLine[] = [{ id: 'hist', entryPrice: target.openQuote, result: target.result }];
   const pnlText =
     target.pnlRealized !== null ? ` ${target.pnlRealized >= 0 ? '+' : ''}${formatByCurrency(target.pnlRealized, target.currency)}` : '';
-  // Acha a vela que REALMENTE contem cada horario, no timeframe atual — nao da pra so assumir
-  // "fechamento menos 60s" pra achar a vela de entrada, porque isso so bate pro M1; trocando pra
-  // M5/M15 a vela de entrada e outra (o marcador tem que casar com uma vela de verdade do array,
-  // senao a biblioteca do grafico pode rejeitar TODOS os marcadores, nao so esse).
+  // 2 linhas horizontais (igual ao grafico de verdade da corretora): "Entrada" tracejada no
+  // preco de abertura, "Saída" continua no preco de fechamento — dá pra ver de longe se o preco
+  // subiu ou desceu entre as duas sem precisar achar as velas exatas.
+  const activeOrders: ActiveOrderLine[] = [
+    { id: 'hist', entryPrice: target.openQuote, closePrice: target.closeQuote, result: target.result },
+  ];
+  // SO UM marcador (na vela de fechamento) — igual ao resto do app pras ordens normais (ver
+  // ChartPage), que tambem nunca marca a entrada separado, so o resultado; a entrada ja fica
+  // clara pela linha tracejada acima. Um 2o marcador de "Entrada" bem colado no de resultado (as
+  // 2 velas ficam a so 1 minuto de distancia) so empilhava texto em cima de texto, dificultando
+  // ler as duas informacoes.
   function candleTimeContaining(epochSec: number): number | null {
     const found = candles.find((c) => c.from <= epochSec && epochSec < c.to) ?? candles.find((c) => c.from >= epochSec);
     return found?.from ?? null;
   }
-  const openCandleTime = candleTimeContaining(openSec);
   const closeCandleTime = candleTimeContaining(closeSec);
   const markers: ChartMarker[] = [];
-  if (openCandleTime !== null) {
-    markers.push({
-      time: openCandleTime,
-      position: target.direction === 'CALL' ? 'belowBar' : 'aboveBar',
-      color: '#fbbf24',
-      shape: 'circle',
-      text: 'Entrada',
-    });
-  }
   if (closeCandleTime !== null) {
     markers.push({
       time: closeCandleTime,
@@ -126,7 +121,6 @@ export function HistoricalEntryModal({ target, assetName, onClose }: Props) {
       text: `${target.result ?? '—'}${pnlText}`,
     });
   }
-  markers.sort((a, b) => a.time - b.time);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3" role="dialog" aria-modal="true">

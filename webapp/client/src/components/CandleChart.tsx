@@ -23,6 +23,11 @@ export interface ActiveOrderLine {
   entryPrice: number;
   /** 'WIN' | 'LOSS' | 'DOJI' colore a linha pelo resultado final; null = ainda em aberto. */
   result: 'WIN' | 'LOSS' | 'DOJI' | null;
+  /** So usado pelo historico REAL (ver HistoricalEntryModal) — preco de fechamento, desenhado
+   * como uma SEGUNDA linha (continua, nao tracejada) rotulada "Saída", pra deixar claro onde a
+   * vela fechou, igual ao grafico de verdade da corretora (2 linhas: entrada e saida). Ordens
+   * normais (ao vivo) nunca preenchem isso — so sabem o resultado, nao o preco exato de saida. */
+  closePrice?: number;
 }
 
 export interface SRLevelLine {
@@ -92,6 +97,7 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const activeOrderLinesRef = useRef<Map<string, IPriceLine>>(new Map());
+  const closeOrderLinesRef = useRef<Map<string, IPriceLine>>(new Map());
   const srLevelLinesRef = useRef<IPriceLine[]>([]);
 
   useEffect(() => {
@@ -153,6 +159,7 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
       seriesRef.current = null;
       markersPluginRef.current = null;
       activeOrderLinesRef.current.clear();
+      closeOrderLinesRef.current.clear();
       srLevelLinesRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -226,6 +233,36 @@ export const CandleChart = forwardRef<CandleChartHandle, Props>(function CandleC
             lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
             title: 'Entrada',
+          })
+        );
+      }
+    }
+
+    // Linha de SAIDA (preco de fechamento) — so existe quando `closePrice` vem preenchido (ver
+    // ActiveOrderLine). Continua (nao tracejada), pra diferenciar visualmente da de entrada.
+    const closeCurrent = closeOrderLinesRef.current;
+    const closeWanted = new Map((activeOrders ?? []).filter((o) => o.closePrice !== undefined).map((o) => [o.id, o]));
+    for (const [id, line] of closeCurrent) {
+      if (!closeWanted.has(id)) {
+        series.removePriceLine(line);
+        closeCurrent.delete(id);
+      }
+    }
+    for (const order of closeWanted.values()) {
+      const color = order.result === 'WIN' ? '#22c55e' : order.result === 'LOSS' ? '#f43f5e' : '#facc15';
+      const existing = closeCurrent.get(order.id);
+      if (existing) {
+        existing.applyOptions({ price: order.closePrice!, color });
+      } else {
+        closeCurrent.set(
+          order.id,
+          series.createPriceLine({
+            price: order.closePrice!,
+            color,
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'Saída',
           })
         );
       }
