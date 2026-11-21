@@ -5,7 +5,7 @@ import {
   BalanceType,
   type Candle as SdkCandle,
 } from '@quadcode-tech/client-sdk-js';
-import type { AppMode, AssetInfo, AssetKind, Candle, Direction } from '@polarium12c/shared';
+import type { AppMode, AssetInfo, AssetKind, BrokerHistoryPosition, Candle, Direction } from '@polarium12c/shared';
 import {
   NotImplementedError,
   type BrokerAdapter,
@@ -340,6 +340,49 @@ export class PolariumAdapter implements BrokerAdapter {
 
     const pnl = closed.pnlRealized;
     return { result: pnl > 0 ? 'WIN' : pnl < 0 ? 'LOSS' : 'DOJI', pnl };
+  }
+
+  // Tope de seguranca: nunca pagina mais que isso (30 posicoes por pagina, ver fetchPrevPage
+  // do SDK) — mesmo que `sinceMs` peca um periodo enorme (ou a conta tenha historico demais),
+  // o pedido tem que terminar num tempo razoavel. 100 paginas = ate 3000 posicoes.
+  private static readonly HISTORY_MAX_PAGES = 100;
+
+  async getPositionsHistory(sinceMs: number): Promise<BrokerHistoryPosition[]> {
+    const sdk = this.requireSdk();
+    const [positions, balances] = await Promise.all([sdk.positions(), sdk.balances()]);
+    // `invest`/`pnlRealized` vem na moeda da PROPRIA conta (balance), nunca fixo em BRL — por
+    // isso cruzamos balanceId com os saldos conhecidos pra saber tipo (demo/real) e moeda de
+    // cada posicao, em vez de assumir uma moeda so pra conta inteira.
+    const balanceById = new Map(balances.getBalances().map((b) => [String(b.id), b]));
+
+    const history = positions.getPositionsHistory();
+    for (let page = 0; page < PolariumAdapter.HISTORY_MAX_PAGES && history.hasPrevPage(); page++) {
+      await history.fetchPrevPage();
+      const loaded = history.getPositions();
+      const oldest = loaded[loaded.length - 1];
+      const oldestTime = oldest?.closeTime?.getTime() ?? oldest?.openTime?.getTime();
+      // Ja temos posicoes mais antigas que o corte pedido — mais uma pagina so traria ainda
+      // mais antigas, pode parar (a lista ja cobre o periodo pedido e sobra um pouco).
+      if (oldestTime !== undefined && oldestTime < sinceMs) break;
+    }
+
+    return history.getPositions().map((p): BrokerHistoryPosition => {
+      const balance = p.balanceId !== undefined ? balanceById.get(String(p.balanceId)) : undefined;
+      const pnlRealized = p.pnlRealized ?? null;
+      const direction = p.direction?.toUpperCase();
+      return {
+        externalId: p.externalId ?? -1,
+        activeId: p.activeId ?? -1,
+        direction: direction === 'CALL' ? 'CALL' : direction === 'PUT' ? 'PUT' : null,
+        invest: p.invest ?? null,
+        openTime: p.openTime?.getTime() ?? null,
+        closeTime: p.closeTime?.getTime() ?? null,
+        pnlRealized,
+        result: pnlRealized === null ? null : pnlRealized > 0 ? 'WIN' : pnlRealized < 0 ? 'LOSS' : 'DOJI',
+        balanceType: balance?.type ?? null,
+        currency: balance?.currency ?? null,
+      };
+    });
   }
 
   async disconnect(): Promise<void> {

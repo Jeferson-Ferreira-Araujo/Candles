@@ -1,6 +1,7 @@
 import type {
   AssetInfo,
   BacktestSummary,
+  BrokerHistoryPosition,
   Candle,
   ClassicStrategyId,
   ClassicStrategyResult,
@@ -216,6 +217,13 @@ export const api = {
   getDailyResult: () => req('/api/daily-result').then((r) => json<DailyResult>(r)),
 
   getBalances: () => req('/api/balances').then((r) => json<Balance[]>(r)),
+
+  getRealHistory: (days: number) =>
+    req(`/api/real-history?days=${days}`).then((r) =>
+      json<{ positions: BrokerHistoryPosition[]; summaryByBalance: Record<string, { wins: number; losses: number; dojis: number; pnl: number }> }>(
+        r
+      )
+    ),
 
   getOrders: (limit = 200) => req(`/api/orders?limit=${limit}`).then((r) => json<OrderRecord[]>(r)),
 

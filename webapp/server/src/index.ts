@@ -606,6 +606,43 @@ app.get('/api/balances', async (_req, res) => {
   }
 });
 
+// Historico REAL de posicoes ja fechadas, direto da corretora (ver BrokerAdapter.getPositionsHistory)
+// — INDEPENDENTE do registro local em `orders` (que depende do nosso servidor/banco estarem de
+// pe no momento exato da entrada; ja ficou vazio apos uma queda do banco). `days` conta dias de
+// CALENDARIO incluindo hoje, igual aos outros endpoints de historico/varredura.
+app.get('/api/real-history', async (req, res) => {
+  const days = Number(req.query.days ?? 7);
+  if (!Number.isFinite(days) || days <= 0) {
+    res.status(400).json({ error: 'Informe days (numero positivo).' });
+    return;
+  }
+  try {
+    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    const positions = await brokerManager.get().getPositionsHistory(sinceMs);
+    const filtered = positions
+      .filter((p) => (p.closeTime ?? p.openTime ?? 0) >= sinceMs)
+      .sort((a, b) => (b.closeTime ?? b.openTime ?? 0) - (a.closeTime ?? a.openTime ?? 0));
+
+    const summaryByBalance = new Map<string, { wins: number; losses: number; dojis: number; pnl: number }>();
+    for (const p of filtered) {
+      const key = p.balanceType ?? 'desconhecida';
+      const s = summaryByBalance.get(key) ?? { wins: 0, losses: 0, dojis: 0, pnl: 0 };
+      if (p.result === 'WIN') s.wins++;
+      else if (p.result === 'LOSS') s.losses++;
+      else if (p.result === 'DOJI') s.dojis++;
+      s.pnl += p.pnlRealized ?? 0;
+      summaryByBalance.set(key, s);
+    }
+
+    res.json({
+      positions: filtered,
+      summaryByBalance: Object.fromEntries(summaryByBalance),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // Lista de ativos (nome/OTC/tipos) muda raramente — cache curto em memoria evita repetir
 // varias chamadas ao SDK a cada vez que o usuario abre o seletor de ativos.
 let assetsCache: { at: number; data: AssetInfo[] } | null = null;

@@ -42,6 +42,30 @@ export type TradeResult = 'WIN' | 'LOSS' | 'DOJI';
 export type AppMode = 'OBSERVATION' | 'DEMO' | 'REAL';
 
 /**
+ * Uma posicao (entrada) ja fechada, vinda DIRETO da corretora (historico real de verdade da
+ * conta, via SDK — ver BrokerAdapter.getPositionsHistory) — NAO e o registro local em `orders`
+ * (que depende do nosso banco/servidor estarem de pe no momento exato da entrada e podem faltar
+ * registros, como aconteceu apos a queda do banco). Serve pra auditoria/analise do que
+ * REALMENTE aconteceu na conta, independente do nosso historico local.
+ */
+export interface BrokerHistoryPosition {
+  externalId: number;
+  activeId: number;
+  direction: Direction | null;
+  /** Valor investido na entrada, na moeda da propria conta (ver `currency`). */
+  invest: number | null;
+  openTime: number | null; // epoch ms
+  closeTime: number | null; // epoch ms
+  /** Lucro/prejuizo real da posicao ja fechada, na moeda da conta. */
+  pnlRealized: number | null;
+  /** Derivado de pnlRealized (>0 WIN, <0 LOSS, ===0 DOJI) — null se a posicao nao tem pnlRealized ainda. */
+  result: TradeResult | null;
+  /** 'demo' | 'real' | null (nao foi possivel casar com nenhum saldo conhecido da conta). */
+  balanceType: string | null;
+  currency: string | null;
+}
+
+/**
  * Estado de exibicao do card de monitor, derivado do tamanho do prefixo casado, relativo ao
  * tamanho do padrao customizado ativo. A funcao patternDisplayState() mora em strategyRule.ts
  * (nao aqui) para evitar import circular (strategyRule.ts ja importa este tipo daqui).

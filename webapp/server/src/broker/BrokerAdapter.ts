@@ -1,4 +1,4 @@
-import type { AppMode, AssetInfo, Candle, Direction, TradeResult } from '@polarium12c/shared';
+import type { AppMode, AssetInfo, BrokerHistoryPosition, Candle, Direction, TradeResult } from '@polarium12c/shared';
 
 /**
  * Contrato unico entre a aplicacao e qualquer corretora. Tudo que a aplicacao sabe sobre
@@ -55,6 +55,15 @@ export interface BrokerAdapter {
   authenticate(): Promise<void>;
 
   getBalances(): Promise<BrokerBalance[]>;
+
+  /**
+   * Historico REAL de posicoes ja fechadas da conta, direto da corretora (todas as contas —
+   * demo e real — ja vem misturadas, usar `balanceType` pra separar). `sinceMs` e um corte
+   * (epoch ms): o adapter deve parar de paginar assim que alcancar posicoes mais antigas que
+   * isso, mas pode devolver algumas um pouco mais antigas ainda na mesma pagina (nao e um
+   * filtro exato) — quem exibe deve filtrar de novo se precisar do corte exato.
+   */
+  getPositionsHistory(sinceMs: number): Promise<BrokerHistoryPosition[]>;
 
   /** Lista de ativos disponiveis (nome/ticker, se e OTC, em quais tipos de opcao aparece) — para preencher seletores de busca por nome. */
   listAssets(): Promise<AssetInfo[]>;

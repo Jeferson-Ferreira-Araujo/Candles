@@ -1,4 +1,4 @@
-import type { AssetInfo, Candle } from '@polarium12c/shared';
+import type { AssetInfo, BrokerHistoryPosition, Candle } from '@polarium12c/shared';
 import type {
   BrokerAdapter,
   BrokerBalance,
@@ -14,6 +14,8 @@ interface MockOrderState {
   amount: number;
   openCandle: Candle | null; // candle vigente no momento da compra (para achar a de resolucao depois)
   resolution: BrokerOrderResolution | null;
+  requestedAt: number; // epoch ms — usado so por getPositionsHistory (historico simulado)
+  resolvedAt: number | null;
 }
 
 export interface MockBrokerConfig {
@@ -81,6 +83,7 @@ export class MockBrokerAdapter implements BrokerAdapter {
         const result = !wentUp && !wentDown ? 'DOJI' : won ? 'WIN' : 'LOSS';
         const pnl = result === 'WIN' ? order.amount * this.config.payout : result === 'LOSS' ? -order.amount : 0;
         order.resolution = { result, pnl, payoutPercentage: this.config.payout };
+        order.resolvedAt = Date.now();
         this.balance += pnl;
         this.orders.set(orderId, order);
       }
@@ -138,6 +141,8 @@ export class MockBrokerAdapter implements BrokerAdapter {
       amount: params.amount,
       openCandle,
       resolution: null,
+      requestedAt: Date.now(),
+      resolvedAt: null,
     });
     this.balance -= params.amount;
     return { brokerOrderId };
@@ -153,6 +158,28 @@ export class MockBrokerAdapter implements BrokerAdapter {
     const order = this.orders.get(brokerOrderId);
     if (!order) return null;
     return order.resolution;
+  }
+
+  async getPositionsHistory(sinceMs: number): Promise<BrokerHistoryPosition[]> {
+    this.assertConnected();
+    const out: BrokerHistoryPosition[] = [];
+    let i = 0;
+    for (const order of this.orders.values()) {
+      if (!order.resolution || order.resolvedAt === null || order.resolvedAt < sinceMs) continue;
+      out.push({
+        externalId: i++,
+        activeId: order.activeId,
+        direction: order.direction,
+        invest: order.amount,
+        openTime: order.requestedAt,
+        closeTime: order.resolvedAt,
+        pnlRealized: order.resolution.pnl,
+        result: order.resolution.result,
+        balanceType: 'demo',
+        currency: 'USD',
+      });
+    }
+    return out;
   }
 
   async disconnect(): Promise<void> {
