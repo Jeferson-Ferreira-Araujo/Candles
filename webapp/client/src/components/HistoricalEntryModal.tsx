@@ -130,7 +130,11 @@ export function HistoricalEntryModal({ target, assetName, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3" role="dialog" aria-modal="true">
-      <div className="w-full max-w-4xl rounded-xl border border-slate-800 bg-slate-950 flex flex-col max-h-[90vh]">
+      {/* `h-[85vh]` (nao so max-h) e proposital: um filho `flex-1` (ver div do grafico abaixo) so
+          cresce de verdade quando o PAI tem uma altura definida — com so max-h, o modal encolhe
+          pro tamanho do conteudo e o `flex-1` do grafico vira 0px (foi exatamente o bug visto:
+          grafico em branco, so os eixos e os marcadores sem nenhuma vela desenhada). */}
+      <div className="w-full max-w-4xl h-[85vh] rounded-xl border border-slate-800 bg-slate-950 flex flex-col">
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-800">
           <div>
             <div className="font-semibold">{assetName}</div>
