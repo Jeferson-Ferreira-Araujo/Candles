@@ -36,6 +36,8 @@ export function OperationsPage() {
   const [realHistory, setRealHistory] = useState<{
     positions: BrokerHistoryPosition[];
     summaryByBalance: Record<string, { wins: number; losses: number; dojis: number; pnl: number }>;
+    summaryTotal: { wins: number; losses: number; dojis: number };
+    pnlByCurrency: Record<string, number>;
   } | null>(null);
   const [realHistoryError, setRealHistoryError] = useState<string | null>(null);
   const [realHistoryLoading, setRealHistoryLoading] = useState(false);
@@ -192,7 +194,12 @@ const BALANCE_TYPE_LABEL: Record<string, string> = { demo: 'Demo', real: 'Real' 
 interface RealHistorySectionProps {
   days: number;
   onChangeDays: (days: number) => void;
-  data: { positions: BrokerHistoryPosition[]; summaryByBalance: Record<string, { wins: number; losses: number; dojis: number; pnl: number }> } | null;
+  data: {
+    positions: BrokerHistoryPosition[];
+    summaryByBalance: Record<string, { wins: number; losses: number; dojis: number; pnl: number }>;
+    summaryTotal: { wins: number; losses: number; dojis: number };
+    pnlByCurrency: Record<string, number>;
+  } | null;
   loading: boolean;
   error: string | null;
   nameOf: (activeId: number) => string;
@@ -215,9 +222,24 @@ function formatByCurrency(value: number, currency: string | null): string {
  * entao continua mostrando o que de fato aconteceu mesmo que o servidor tenha ficado fora do
  * ar num periodo (foi exatamente o caso encontrado: o registro local ficou praticamente vazio). */
 function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf, onOpenInChart }: RealHistorySectionProps) {
+  // Texto digitado no campo de dias customizado — so aplica (onChangeDays) quando um numero
+  // inteiro positivo valido e confirmado, pra nao disparar uma busca a cada tecla.
+  const [customDaysInput, setCustomDaysInput] = useState(String(days));
+  useEffect(() => {
+    setCustomDaysInput(String(days));
+  }, [days]);
+  function applyCustomDays() {
+    const n = Math.floor(Number(customDaysInput));
+    if (Number.isFinite(n) && n > 0) onChangeDays(n);
+    else setCustomDaysInput(String(days));
+  }
+
+  const totalCount = data ? data.summaryTotal.wins + data.summaryTotal.losses + data.summaryTotal.dojis : 0;
+  const totalWinRate = totalCount > 0 ? (data!.summaryTotal.wins / totalCount) * 100 : 0;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 text-sm flex-wrap">
         <span className="text-slate-400">Período:</span>
         {REAL_HISTORY_DAYS_OPTIONS.map((d) => (
           <button
@@ -231,9 +253,44 @@ function RealHistorySection({ days, onChangeDays, data, loading, error, nameOf, 
             {d === 1 ? 'Hoje' : `${d}d`}
           </button>
         ))}
+        <span className="text-slate-600">ou</span>
+        <input
+          type="number"
+          min={1}
+          value={customDaysInput}
+          onChange={(e) => setCustomDaysInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && applyCustomDays()}
+          onBlur={applyCustomDays}
+          className="w-16 bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs"
+          title="Quantidade de dias (ex.: 2 ou 3)"
+        />
+        <span className="text-slate-500 text-xs">dias (Enter pra aplicar)</span>
       </div>
 
       {error && <div className="rounded-lg border border-rose-800 bg-rose-950/50 p-3 text-sm text-rose-300">{error}</div>}
+
+      {data && totalCount > 0 && (
+        <div className="rounded-xl border border-sky-800 bg-sky-950/20 p-4 min-w-[220px]">
+          <div className="text-xs text-slate-400 mb-1">Total geral do período</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-xl font-bold text-emerald-400">{data.summaryTotal.wins}W</span>
+            <span className="text-xl font-bold text-rose-400">{data.summaryTotal.losses}L</span>
+            {data.summaryTotal.dojis > 0 && <span className="text-sm text-slate-500">{data.summaryTotal.dojis}D</span>}
+            <span className="text-sm text-slate-400">({totalWinRate.toFixed(1)}% de assertividade)</span>
+          </div>
+          {/* PnL somado SO dentro da MESMA moeda — nunca junta dolar com real como se fosse o
+              mesmo numero (ver comentario no servidor, pnlByCurrency). Se so existir 1 moeda no
+              periodo, aparece so 1 valor; se existirem 2+, aparece 1 linha por moeda. */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+            {Object.entries(data.pnlByCurrency).map(([currency, pnl]) => (
+              <span key={currency} className={`text-sm font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {pnl >= 0 ? '+' : ''}
+                {formatByCurrency(pnl, currency === 'desconhecida' ? null : currency)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {data && Object.keys(data.summaryByBalance).length > 0 && (
         <div className="flex flex-wrap gap-3">

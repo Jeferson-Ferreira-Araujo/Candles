@@ -220,9 +220,12 @@ export const api = {
 
   getRealHistory: (days: number) =>
     req(`/api/real-history?days=${days}`).then((r) =>
-      json<{ positions: BrokerHistoryPosition[]; summaryByBalance: Record<string, { wins: number; losses: number; dojis: number; pnl: number }> }>(
-        r
-      )
+      json<{
+        positions: BrokerHistoryPosition[];
+        summaryByBalance: Record<string, { wins: number; losses: number; dojis: number; pnl: number }>;
+        summaryTotal: { wins: number; losses: number; dojis: number };
+        pnlByCurrency: Record<string, number>;
+      }>(r)
     ),
 
   getOrders: (limit = 200) => req(`/api/orders?limit=${limit}`).then((r) => json<OrderRecord[]>(r)),

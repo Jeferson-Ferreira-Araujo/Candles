@@ -610,6 +610,17 @@ app.get('/api/balances', async (_req, res) => {
 // — INDEPENDENTE do registro local em `orders` (que depende do nosso servidor/banco estarem de
 // pe no momento exato da entrada; ja ficou vazio apos uma queda do banco). `days` conta dias de
 // CALENDARIO incluindo hoje, igual aos outros endpoints de historico/varredura.
+// Brasil nao tem horario de verao desde 2019 — UTC-3 fixo. "Hoje" precisa ser o dia de
+// calendario NO FUSO DO USUARIO, nao so "ultimas 24h a partir de agora" (isso incluia pedacos
+// de ontem o dia inteiro, dependendo da hora que o usuario checava — ex.: as 20h, "ultimas 24h"
+// pegava desde as 20h de ontem, nao desde a meia-noite de hoje) nem meia-noite UTC (que cai as
+// 21h do dia anterior em horario de Brasilia, tambem incluindo pedaco de ontem).
+const BRAZIL_UTC_OFFSET_MS = -3 * 60 * 60 * 1000;
+function startOfTodayBrazilMs(): number {
+  const nowBrazil = new Date(Date.now() + BRAZIL_UTC_OFFSET_MS);
+  return Date.UTC(nowBrazil.getUTCFullYear(), nowBrazil.getUTCMonth(), nowBrazil.getUTCDate()) - BRAZIL_UTC_OFFSET_MS;
+}
+
 app.get('/api/real-history', async (req, res) => {
   const days = Number(req.query.days ?? 7);
   if (!Number.isFinite(days) || days <= 0) {
@@ -617,26 +628,48 @@ app.get('/api/real-history', async (req, res) => {
     return;
   }
   try {
-    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    // days=1 ("Hoje") = so desde a meia-noite de hoje (Brasilia); days=2/3/etc. = esse tanto de
+    // dias de CALENDARIO incluindo hoje — mesma convencao usada no resto do app (ver
+    // startOfTodayUtc em classicStrategies.ts), so que no fuso certo pro usuario.
+    const sinceMs = startOfTodayBrazilMs() - (days - 1) * 24 * 60 * 60 * 1000;
     const positions = await brokerManager.get().getPositionsHistory(sinceMs);
     const filtered = positions
       .filter((p) => (p.closeTime ?? p.openTime ?? 0) >= sinceMs)
       .sort((a, b) => (b.closeTime ?? b.openTime ?? 0) - (a.closeTime ?? a.openTime ?? 0));
 
     const summaryByBalance = new Map<string, { wins: number; losses: number; dojis: number; pnl: number }>();
+    // Soma GERAL de ganhos/perdas/assertividade — numero de entradas e sempre seguro de somar
+    // entre contas, NUNCA o pnl: Demo e Real podem estar em moedas diferentes (ex.: uma em
+    // dolar, outra em real), e somar valores de moedas diferentes como se fossem a mesma daria
+    // um total sem sentido (o mesmo risco de confusao de moeda que ja corrigimos antes no valor
+    // de entrada). Por isso o pnl entra separado, agrupado por MOEDA, nunca misturado.
+    const summaryTotal = { wins: 0, losses: 0, dojis: 0 };
+    const pnlByCurrency = new Map<string, number>();
     for (const p of filtered) {
       const key = p.balanceType ?? 'desconhecida';
       const s = summaryByBalance.get(key) ?? { wins: 0, losses: 0, dojis: 0, pnl: 0 };
-      if (p.result === 'WIN') s.wins++;
-      else if (p.result === 'LOSS') s.losses++;
-      else if (p.result === 'DOJI') s.dojis++;
+      if (p.result === 'WIN') {
+        s.wins++;
+        summaryTotal.wins++;
+      } else if (p.result === 'LOSS') {
+        s.losses++;
+        summaryTotal.losses++;
+      } else if (p.result === 'DOJI') {
+        s.dojis++;
+        summaryTotal.dojis++;
+      }
       s.pnl += p.pnlRealized ?? 0;
       summaryByBalance.set(key, s);
+
+      const currencyKey = p.currency ?? 'desconhecida';
+      pnlByCurrency.set(currencyKey, (pnlByCurrency.get(currencyKey) ?? 0) + (p.pnlRealized ?? 0));
     }
 
     res.json({
       positions: filtered,
       summaryByBalance: Object.fromEntries(summaryByBalance),
+      summaryTotal,
+      pnlByCurrency: Object.fromEntries(pnlByCurrency),
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
