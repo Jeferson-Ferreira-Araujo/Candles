@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { AppEvent, AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
-import { CLASSIC_STRATEGIES } from '@polarium12c/shared';
 import { api, type AssetScanRanking, type WatchlistEntry } from '../api.js';
 import {
   CandleChart,
@@ -144,13 +143,8 @@ export function ChartPage() {
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [days, setDays] = useState(SCAN_DAYS);
   const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
-  const [hasActivePattern, setHasActivePattern] = useState(false);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [srLevels, setSrLevels] = useState<SRLevelLine[]>([]);
-  // Liga/desliga o indicador de Suporte/Resistencia no grafico — igual ao menu de indicadores
-  // das corretoras. Ligado por padrao; o usuario pode desligar se achar que estao poluindo a
-  // tela num ativo mais volatil.
-  const [showSRIndicator, setShowSRIndicator] = useState(true);
   const [loadingChart, setLoadingChart] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
   const [watchingAssetId, setWatchingAssetId] = useState<number | null>(null);
@@ -177,6 +171,12 @@ export function ChartPage() {
   const [showRanking, setShowRanking] = useState(false);
   const [resultIndex, setResultIndex] = useState<number | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
+  // Estados novos so da interface (mockup "Painel"): nenhum muda o que e calculado/enviado, so
+  // o que fica visivel na tela.
+  const [showAssetPicker, setShowAssetPicker] = useState(false); // chevron do cabecalho do grafico
+  const [editingLimits, setEditingLimits] = useState(false); // card Valor/Stop loss/Meta
+  const [watchlistCardOpen, setWatchlistCardOpen] = useState(true); // card "Estratégias se formando ao vivo"
+  const [watchlistShowAll, setWatchlistShowAll] = useState(false); // dentro do card: top 2 vs lista inteira
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
   // 2+ entradas simultaneas no mesmo ativo sao permitidas (cliques repetidos em Comprar/Vender
@@ -315,29 +315,6 @@ export function ChartPage() {
     }
   }, [checkPendingSignal]);
 
-  // So recalcula estrategia/marcadores pro ativo ja carregado — nao mexe nas velas nem
-  // reabre a transmissao (rapido, usado quando o usuario troca so a estrategia no seletor).
-  const applyStrategy = useCallback(async (mode: StrategyMode) => {
-    const assetId = watchingAssetIdRef.current;
-    if (assetId === null) return;
-    setBest('loading');
-    setPendingSignal(null);
-    setChartSetupCandleTimes([]);
-    try {
-      const result = await resolveStrategy(assetId, daysRef.current, mode);
-      setBest(result);
-      checkPendingSignal(result, assetId);
-    } catch (err) {
-      setBest(null);
-      setChartError(err instanceof Error ? err.message : String(err));
-    }
-  }, [checkPendingSignal]);
-
-  function onStrategyModeChange(mode: StrategyMode) {
-    setStrategyMode(mode);
-    applyStrategy(mode);
-  }
-
   // Vigia em segundo plano os pares ativo+estrategia do RANKING (ate 20, do 1o ao 20o colocado)
   // — avisa via WebSocket quando "esse mesmo cenario" (o que colocou aquele ativo no ranking)
   // comeca a se formar de novo, mesmo com o usuario olhando outro ativo no grafico. Dedup por
@@ -381,59 +358,8 @@ export function ChartPage() {
     }
   }, [loadChartFor]);
 
-  // Varredura de UMA estrategia escolhida: testa SO ela em TODOS os ativos — fluxo "escolhi a
-  // estrategia, me diz em quais ativos ela ta valendo a pena e em qual ta se formando AGORA".
-  // Abre direto o grafico do melhor resultado e mostra os 5 melhores ativos pra essa estrategia
-  // no painel de ranking (mesmo painel usado pela varredura completa).
-  const runStrategyScan = useCallback(
-    async (strategyId: ClassicStrategyId) => {
-      setScanStatus('scanning');
-      try {
-        const res = await api.scanStrategy(strategyId, SCAN_DAYS);
-        setScanInfo({ assetsScanned: res.assetsScanned, tookMs: res.tookMs, bestAssetName: res.best?.assetName });
-        setScanRanking(res.top);
-        updateWatchlistFromRanking(res.top);
-        setShowRanking(true); // abre direto (tabela tem scroll), sem precisar clicar de novo
-        setScanStatus('done');
-        if (res.best) {
-          setDays(SCAN_DAYS);
-          loadChartFor(res.best.activeId, strategyId, SCAN_DAYS);
-        }
-      } catch {
-        setScanStatus('error');
-      }
-    },
-    [loadChartFor]
-  );
-
-  // Botao "Verificar" da barra superior: o que ele faz depende da estrategia escolhida no
-  // seletor — 'auto' reaproveita a varredura completa (10 estrategias), um id especifico dispara
-  // a varredura de SO aquela estrategia em todos os ativos, e 'pattern' (padrao customizado) nao
-  // tem varredura "todos os ativos" ainda, entao so recarrega o ativo ja selecionado.
-  // Verificar: respeita o ativo escolhido (ou "Todos") e a estrategia escolhida (ou
-  // "Automatico" = testa todas). 4 combinacoes:
-  //  - ativo especifico + estrategia especifica -> carrega direto esse par.
-  //  - ativo especifico + automatico -> testa todas as estrategias NESSE ativo, abre a melhor.
-  //  - todos os ativos + estrategia especifica -> varre todos os ativos so com essa estrategia.
-  //  - todos os ativos + automatico -> varredura completa (como ja era).
-  function handleVerify() {
-    if (selectedAssetId !== null) {
-      loadChartFor(selectedAssetId, strategyMode);
-      return;
-    }
-    if (strategyMode === 'auto') {
-      runFullScan();
-    } else if (strategyMode === 'pattern') {
-      // padrao customizado nao tem varredura "todos os ativos" ainda — precisa escolher um ativo.
-      setChartError('Escolha um ativo específico para testar o padrão customizado.');
-    } else {
-      runStrategyScan(strategyMode);
-    }
-  }
-
   useEffect(() => {
     api.getAssets().then(setAssets).catch(() => {});
-    api.getActivePattern().then((p) => setHasActivePattern(!!p)).catch(() => {});
     api.getSettings().then(setSettings).catch(() => {});
   }, []);
 
@@ -801,42 +727,6 @@ export function ChartPage() {
     .filter((o) => o.status !== 'OPEN' && o.pnl !== undefined)
     .reduce((sum, o) => sum + (o.pnl ?? 0), 0);
 
-  // So os marcadores de RESULTADO (win/loss), em ordem cronologica — usado pra "voltar no
-  // tempo" navegando ocorrencia por ocorrencia. Depende de `best` (nao do array `markers`
-  // acima, que e recriado toda hora) pra so recalcular quando a estrategia/ativo muda de verdade.
-  const resultMarkers = useMemo(() => {
-    if (!best || best === 'loading') return [];
-    return best.markers.filter((m) => m.text === 'WIN' || m.text === 'LOSS').slice().sort((a, b) => a.time - b.time);
-  }, [best]);
-
-  // Zera a navegacao sempre que a estrategia/ativo muda — a posicao antiga nao faz sentido
-  // pro novo conjunto de ocorrencias.
-  useEffect(() => {
-    setResultIndex(null);
-  }, [best]);
-
-  function goToResultIndex(index: number) {
-    if (resultMarkers.length === 0) return;
-    const clamped = Math.max(0, Math.min(resultMarkers.length - 1, index));
-    setResultIndex(clamped);
-    const marker = resultMarkers[clamped]!;
-    const centerIdx = candles.findIndex((c) => c.from === marker.time);
-    if (centerIdx === -1 || !chartRef.current) return;
-    const fromCandle = candles[Math.max(0, centerIdx - 20)]!;
-    const toCandle = candles[Math.min(candles.length - 1, centerIdx + 10)]!;
-    chartRef.current.setVisibleRange(fromCandle.from, toCandle.to);
-  }
-
-  function goPrevResult() {
-    goToResultIndex(resultIndex === null ? resultMarkers.length - 1 : resultIndex - 1);
-  }
-
-  function goNextResult() {
-    goToResultIndex(resultIndex === null ? resultMarkers.length - 1 : resultIndex + 1);
-  }
-
-  const currentResult = resultIndex !== null ? resultMarkers[resultIndex] : undefined;
-
   // Quantos segundos faltam pro minuto atual fechar — a entrada de uma estrategia "pronta"
   // (readyNow) precisa acontecer ANTES disso, ja que e a vela que esta se formando AGORA que
   // serve de entrada. Mesma conta usada pelo acompanhamento de ordem aberta mais abaixo.
@@ -857,11 +747,102 @@ export function ChartPage() {
       return b.progress.stage / b.progress.totalStages - a.progress.stage / a.progress.totalStages;
     });
 
+  const isCancelledRow = (item: WatchlistItem) => item.cancelledAt !== undefined;
+
+  /** Uma linha da lista de oportunidades do ranking — usada tanto no seletor de ativo (chevron
+   * do cabecalho do grafico) quanto, se precisar de novo no futuro, em qualquer outro lugar que
+   * precise desse mesmo resumo visual. Extraida pra nao duplicar essa logica toda. */
+  function renderWatchlistRow(key: string, item: WatchlistItem) {
+    const isCancelled = isCancelledRow(item);
+    const isActiveChartRow = item.activeId === watchingAssetId && item.strategyId === strategyMode;
+    const liveDir = isActiveChartRow && liveCandle ? liveCandleDirection(liveCandle) : null;
+    const chartIsFresher = isActiveChartRow && chartProgressTotalStages === item.progress.totalStages;
+    const effectiveStage = chartIsFresher ? chartSetupCandleTimes.length : item.progress.stage;
+    const effectiveReadyNow = chartIsFresher ? pendingSignal !== null : item.progress.readyNow;
+    const effectiveDirection = chartIsFresher ? chartProgressDirection : item.progress.direction;
+    const formingAgainstPattern =
+      !effectiveReadyNow && effectiveDirection !== null && liveDir !== null && liveDir !== effectiveDirection;
+    const stepSize = 100 / item.progress.totalStages;
+    const elapsedFraction = formingAgainstPattern ? 0 : Math.min(1, (60 - secondsToMinuteClose) / 60);
+    const percent =
+      isCancelled || effectiveReadyNow ? 100 : Math.min(100, Math.round(effectiveStage * stepSize + stepSize * elapsedFraction * 0.9));
+    const barColor = isCancelled
+      ? 'bg-slate-500'
+      : effectiveReadyNow
+        ? effectiveDirection === 'CALL'
+          ? 'bg-emerald-400'
+          : 'bg-rose-400'
+        : 'bg-sky-500';
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => {
+          setStrategyMode(item.strategyId);
+          loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
+          setShowAssetPicker(false);
+        }}
+        className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
+          isActiveChartRow ? 'ring-2 ring-sky-400' : ''
+        } ${
+          isCancelled
+            ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
+            : effectiveReadyNow
+              ? `font-bold animate-pulse ${
+                  effectiveDirection === 'CALL'
+                    ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                    : 'bg-rose-600/20 border-rose-500 text-rose-300'
+                }`
+              : 'border-slate-700 text-slate-300 hover:bg-slate-900'
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate">
+            {isActiveChartRow && (
+              <span className="mr-1.5 text-sky-400" title="Gráfico aberto na tela">
+                📍
+              </span>
+            )}
+            {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
+            {item.stats && (
+              <span className="ml-2 text-slate-500 font-normal" title="Placar dessa estratégia nesse ativo hoje">
+                ({item.stats.wins}W {item.stats.losses}L hoje)
+              </span>
+            )}
+            {!isCancelled && effectiveDirection && (
+              <span className={`ml-2 font-semibold ${effectiveDirection === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {effectiveDirection === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
+              </span>
+            )}
+          </span>
+          <span className="shrink-0 whitespace-nowrap">
+            {isCancelled
+              ? '❌ Não entre'
+              : effectiveReadyNow
+                ? `Entrada em ${secondsToMinuteClose}s`
+                : formingAgainstPattern
+                  ? `${effectiveStage}ª confirmação de ${item.progress.totalStages} · vela atual contra`
+                  : `${effectiveStage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
+          </span>
+        </div>
+        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${formingAgainstPattern ? 'bg-amber-500' : barColor}`}
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      </button>
+    );
+  }
+
+  const resolvedOrders = activeOrders.filter((o) => o.status !== 'OPEN');
+  const lastOrder = resolvedOrders.length > 0 ? resolvedOrders[resolvedOrders.length - 1]! : null;
+
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col max-w-xl mx-auto w-full pb-6">
       {/* Notificacao de resultado — igual ao site oficial, aparece flutuando por cima de tudo
           quando a corretora confirma o fechamento da entrada, some sozinha depois de alguns
-          segundos. Nao depende do usuario estar olhando a faixa de status pra saber o resultado. */}
+          segundos. Nao depende do usuario estar olhando o card "Ultima operacao" pra saber. */}
       {resultToast && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50">
           <div
@@ -882,261 +863,248 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Barra superior: Ativo (padrao Todos), Estrategia (padrao Automatico = testa todas),
-          Dias (padrao ja vem de hoje) e Verificar — ver handleVerify pra como cada combinacao
-          de ativo/estrategia escolhida e interpretada. */}
-      <div className="px-3 sm:px-6 py-2 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950">
-        <select
-          value={selectedAssetId ?? ''}
-          onChange={(e) => setSelectedAssetId(e.target.value === '' ? null : Number(e.target.value))}
-          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm min-w-[150px]"
-          title="Ativo a verificar — Todos testa a estratégia escolhida em todo mundo"
-        >
-          <option value="">Todos os ativos</option>
-          {assets.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-              {a.isOtc ? ' (OTC)' : ''}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={strategyMode}
-          onChange={(e) => onStrategyModeChange(e.target.value as StrategyMode)}
-          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm max-w-[180px] font-medium"
-          title="Estratégia a verificar — Automático testa todas"
-        >
-          <option value="auto">⭐ Automático (testa todas)</option>
-          {hasActivePattern && <option value="pattern">Padrão customizado ativo</option>}
-          {CLASSIC_STRATEGIES.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-
-        <label className="flex items-center gap-1.5 text-xs text-slate-400">
-          Dias
-          <input
-            type="number"
-            min={1}
-            value={days}
-            onChange={(e) => setDays(Math.max(1, Number(e.target.value)))}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm w-16"
-          />
-        </label>
-
-        <button
-          onClick={handleVerify}
-          disabled={scanStatus === 'scanning' || loadingChart}
-          title="Verifica o ativo e a estratégia escolhidos (ou todos, se não escolher)"
-          className="rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-semibold whitespace-nowrap"
-        >
-          {scanStatus === 'scanning' || loadingChart ? '🔍 Verificando...' : '🔍 Verificar'}
-        </button>
-
-        {/* Indicadores — igual ao menu de indicadores das corretoras: liga/desliga o que
-            aparece desenhado em cima do grafico. So Suporte/Resistencia por enquanto. */}
-        <details className="relative">
-          <summary className="list-none cursor-pointer text-xs text-slate-500 hover:text-slate-300 px-2 py-1.5 select-none">
-            📐 indicadores ▾
-          </summary>
-          <div className="absolute z-20 mt-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 shadow-lg whitespace-nowrap">
-            <label className="flex items-center gap-2 text-xs text-slate-300">
-              <input
-                type="checkbox"
-                checked={showSRIndicator}
-                onChange={(e) => setShowSRIndicator(e.target.checked)}
-                className="accent-sky-500"
-              />
-              Suporte / Resistência
-            </label>
+      {/* Robo ativo: mostra o melhor par ativo+estrategia do ranking (mesmo escolhido pela
+          varredura automatica) — SO avisa, a entrada continua exigindo clique manual em
+          Comprar/Vender mais abaixo (nenhuma ordem e enviada sozinha por essa estrategia). */}
+      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-emerald-800/60 bg-emerald-950/10 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 font-bold text-emerald-400 text-sm">
+            <span className="text-lg">🤖</span> Robô {settings?.robotActive ? 'ativo' : 'pausado'}
           </div>
-        </details>
-
-        {watchingAssetId !== null &&
-          (isLive ? (
-            <span className="flex items-center gap-1 text-xs font-medium text-rose-400">
-              <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => runFullScan()}
+              disabled={scanStatus === 'scanning'}
+              title="Verificar de novo agora"
+              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50 px-2 py-1.5 text-xs"
+            >
+              {scanStatus === 'scanning' ? '🔄' : '🔄'}
+            </button>
+            <button
+              type="button"
+              onClick={() => settings && updateSettingsQuick({ robotActive: !settings.robotActive })}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap ${
+                settings?.robotActive ? 'bg-rose-700 hover:bg-rose-600 text-white' : 'bg-emerald-700 hover:bg-emerald-600 text-white'
+              }`}
+            >
+              {settings?.robotActive ? '⏸ Pausar robô' : '▶ Retomar robô'}
+            </button>
+          </div>
+        </div>
+        <div className="mt-2 text-sm space-y-0.5 text-slate-300">
+          <div>
+            Estratégia:{' '}
+            <span className="font-semibold text-slate-100">
+              {best && best !== 'loading' ? best.name : scanStatus === 'scanning' ? 'verificando...' : '—'}
             </span>
-          ) : (
-            <span className="hidden sm:flex items-center gap-1 text-xs text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-slate-600" /> aguardando tick...
-            </span>
-          ))}
+          </div>
+          <div>
+            Ativo: <span className="font-semibold text-slate-100">{nameOf(selectedAssetId) || '—'}</span>
+          </div>
+          <div>
+            Próxima entrada:{' '}
+            {pendingSignal ? (
+              <span className="font-bold text-emerald-400 animate-pulse">
+                ENTRADA AGORA ({pendingSignal === 'CALL' ? 'COMPRA' : 'VENDA'})
+              </span>
+            ) : (
+              <span className="text-amber-400 font-medium">aguardando sinal</span>
+            )}
+          </div>
+        </div>
+        {scanStatus === 'error' && (
+          <div className="mt-2 text-xs text-rose-400">Falha ao verificar os ativos — toque no 🔄 pra tentar de novo.</div>
+        )}
+      </div>
 
+      {chartError && <div className="mx-3 sm:mx-6 mt-2 text-xs text-rose-400">{chartError}</div>}
+
+      {/* Estrategias se formando ao vivo — colapsavel: o cabecalho (chevron) liga/desliga o
+          card inteiro, e "Ver todas"/"Ver menos" alterna entre so as 2 mais perto de confirmar
+          e a lista inteira. Reaproveita a MESMA linha (renderWatchlistRow) que o seletor de
+          ativo do grafico ja usava, so que sempre visivel aqui (nao precisa abrir o chevron do
+          grafico so pra acompanhar o progresso). */}
+      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
         <button
           type="button"
-          onClick={() => chartRef.current?.goToRealTime()}
-          className="text-xs rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5"
+          onClick={() => setWatchlistCardOpen((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3"
         >
-          ⏭ agora
+          <div className="flex items-center gap-2 text-left">
+            <span className="text-lg">🔔</span>
+            <div>
+              <div className="font-bold text-sm text-slate-100">Estratégias se formando ao vivo</div>
+              <div className="text-xs text-slate-500">Progresso das confirmações</div>
+            </div>
+          </div>
+          <span className={`text-slate-400 transition-transform shrink-0 ${watchlistCardOpen ? 'rotate-180' : ''}`}>⌃</span>
         </button>
 
-        {resultMarkers.length > 0 && (
-          <div className="flex items-center gap-1 text-xs" title="Navegar pelas entradas passadas (win/loss)">
-            <button
-              type="button"
-              onClick={goPrevResult}
-              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2 py-1.5"
-            >
-              ◀
+        {watchlistCardOpen && (
+          <div className="px-4 pb-4 space-y-2">
+            {sortedWatchlist.length === 0 ? (
+              <div className="text-xs text-slate-500 py-1">
+                Nenhuma em formação no momento — vigiando os {scanRanking.length || 0} ativos do ranking em segundo plano.
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  {(watchlistShowAll ? sortedWatchlist : sortedWatchlist.slice(0, 2)).map(([key, item]) => renderWatchlistRow(key, item))}
+                </div>
+                {sortedWatchlist.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistShowAll((v) => !v)}
+                    className="text-xs font-medium text-sky-400 hover:text-sky-300"
+                  >
+                    {watchlistShowAll ? 'Ver menos' : `Ver todas (${sortedWatchlist.length})`}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Valor da entrada + limites diarios (Stop loss / Meta) — mesmos campos de Settings que
+          ja existiam, so reorganizados nesse card compacto em vez de uma tela de Ajustes separada. */}
+      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
+        {editingLimits ? (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <label className="space-y-1">
+                <span className="text-slate-500">Valor</span>
+                <input
+                  type="number"
+                  min={5}
+                  value={settings?.entryAmount ?? ''}
+                  onChange={(e) => updateSettingsQuick({ entryAmount: Math.max(5, Number(e.target.value)) })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-slate-500">Stop loss</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={settings?.stopLossDaily ?? ''}
+                  onChange={(e) => updateSettingsQuick({ stopLossDaily: e.target.value === '' ? null : Number(e.target.value) })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-slate-500">Meta</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={settings?.stopWinDaily ?? ''}
+                  onChange={(e) => updateSettingsQuick({ stopWinDaily: e.target.value === '' ? null : Number(e.target.value) })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5"
+                />
+              </label>
+            </div>
+            <button type="button" onClick={() => setEditingLimits(false)} className="text-xs font-medium text-sky-400">
+              Concluir
             </button>
-            <span className="text-slate-500 min-w-[64px] text-center">
-              {currentResult ? (
-                <>
-                  <span className={currentResult.text === 'WIN' ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
-                    {currentResult.text}
-                  </span>{' '}
-                  {resultIndex! + 1}/{resultMarkers.length}
-                </>
-              ) : (
-                `${resultMarkers.length} sinais`
-              )}
-            </span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-4 text-sm">
+              <div>
+                <div className="text-xs text-slate-500">Valor</div>
+                <div className="font-bold whitespace-nowrap">{formatMoney(settings?.entryAmount ?? 0)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Stop loss</div>
+                <div className="font-bold whitespace-nowrap">
+                  {settings?.stopLossDaily ? formatMoney(settings.stopLossDaily) : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Meta</div>
+                <div className="font-bold whitespace-nowrap">{settings?.stopWinDaily ? formatMoney(settings.stopWinDaily) : '—'}</div>
+              </div>
+            </div>
             <button
               type="button"
-              onClick={goNextResult}
-              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2 py-1.5"
+              onClick={() => setEditingLimits(true)}
+              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5 text-xs font-medium shrink-0"
             >
-              ▶
+              ✏️ Editar limites
             </button>
           </div>
         )}
       </div>
 
-
-      {/* Linha de status: varredura OU melhor estrategia (nunca as duas, pra poupar altura —
-          importante no celular deitado, onde a tela e baixa). */}
-      {scanStatus === 'scanning' ? (
-        <div className="px-3 sm:px-6 py-1 text-xs text-sky-400 flex items-center gap-2 border-b border-slate-800 bg-sky-950/20">
-          <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Verificando {strategyMode === 'auto' ? 'todas as estratégias' : 'a estratégia'} em todos os ativos ({SCAN_DAYS} dia)...
-        </div>
-      ) : best === 'loading' ? (
-        <div className="px-3 sm:px-6 py-1 text-xs text-slate-500 flex items-center gap-2 border-b border-slate-800 bg-slate-950">
-          <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
-          Testando estratégia...
-        </div>
-      ) : (
-        best && (
-          <div className="px-3 sm:px-6 py-1 flex items-center gap-3 flex-wrap text-xs border-b border-slate-800 bg-emerald-950/20">
-            <span className="font-semibold text-emerald-300">⭐ {best.name}</span>
-            <span className="text-emerald-400">{best.wins}W</span>
-            <span className="text-rose-400">{best.losses}L</span>
-            <span className="font-semibold text-white">{formatPct(best.winRate)}</span>
-            {scanInfo && (
-              <span className="text-slate-600 hidden sm:inline">
-                ({scanInfo.assetsScanned} ativos em {formatMs(scanInfo.tookMs)})
+      {/* Grafico — cabecalho com o ativo atual + chevron que abre a lista de oportunidades do
+          ranking (trocar pra outro ativo/estrategia), igual ao menu suspenso do mockup. */}
+      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowAssetPicker((v) => !v)}
+          className="w-full flex items-center justify-between px-3 py-2.5 border-b border-slate-800"
+        >
+          <span className="font-semibold text-sm flex items-center gap-1.5">
+            {nameOf(selectedAssetId) || 'Escolha um ativo'} <span className="text-slate-500 font-normal">· M1</span>
+          </span>
+          <span className="flex items-center gap-2">
+            {watchingAssetId !== null && isLive && (
+              <span className="flex items-center gap-1 text-[11px] font-medium text-rose-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
               </span>
             )}
-            {scanRanking.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowRanking((v) => !v)}
-                className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
-              >
-                {showRanking ? 'ocultar ranking' : `ranking (${scanRanking.length})`}
-              </button>
+            <span className={`text-slate-400 transition-transform ${showAssetPicker ? 'rotate-180' : ''}`}>⌄</span>
+          </span>
+        </button>
+
+        {showAssetPicker && (
+          <div className="border-b border-slate-800 max-h-56 overflow-y-auto p-2">
+            {sortedWatchlist.length === 0 ? (
+              <div className="px-1 py-2 text-xs text-slate-500">Nenhuma oportunidade no ranking no momento.</div>
+            ) : (
+              <div className="flex flex-col gap-1.5">{sortedWatchlist.map(([key, item]) => renderWatchlistRow(key, item))}</div>
             )}
           </div>
-        )
-      )}
-      {scanStatus === 'error' && (
-        <div className="px-3 sm:px-6 py-1 text-[11px] text-rose-400 border-b border-slate-800 bg-rose-950/20">
-          Falha ao analisar todos os ativos (tente de novo pelo botão).
-        </div>
-      )}
+        )}
 
-      {/* Ranking completo da varredura — escondido por padrao, pra caber tudo numa tela so;
-          abre sob demanda pra comparar ativo+estrategia antes de decidir. */}
-      {showRanking && scanRanking.length > 0 && (
-        <div className="border-b border-slate-800 bg-slate-950 max-h-40 overflow-y-auto">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-slate-900 text-slate-500">
-              <tr>
-                <th className="text-left font-medium px-3 sm:px-6 py-1">#</th>
-                <th className="text-left font-medium py-1">Ativo</th>
-                <th className="text-left font-medium py-1">Estratégia</th>
-                <th className="text-center font-medium py-1">Agora</th>
-                <th className="text-right font-medium py-1">Acerto</th>
-                <th className="text-right font-medium px-3 sm:px-6 py-1">Wins/Losses</th>
-              </tr>
-            </thead>
-            <tbody>
-              {scanRanking.map((row, i) => (
-                <tr
-                  key={`${row.activeId}-${row.strategyId}`}
-                  onClick={() => applyRanking(row)}
-                  className={`cursor-pointer border-t border-slate-900 hover:bg-slate-900 transition-colors ${
-                    row.activeId === watchingAssetId && row.strategyId === strategyMode ? 'bg-slate-800' : ''
-                  } ${row.pendingDirection ? 'bg-amber-950/30' : ''}`}
-                >
-                  <td className="px-3 sm:px-6 py-1 text-slate-500">{i + 1}</td>
-                  <td className="py-1 font-medium">{row.assetName}</td>
-                  <td className="py-1 text-slate-400">{row.strategyName}</td>
-                  <td className="py-1 text-center">
-                    {row.pendingDirection && (
-                      <span
-                        className={`inline-flex items-center gap-0.5 font-bold ${
-                          row.pendingDirection === 'CALL' ? 'text-emerald-400' : 'text-rose-400'
-                        }`}
-                        title="Setup se formando agora"
-                      >
-                        🔔 {row.pendingDirection === 'CALL' ? 'CALL' : 'PUT'}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-1 text-right font-semibold text-emerald-400">{formatPct(row.winRate)}</td>
-                  <td className="px-3 sm:px-6 py-1 text-right text-slate-500">
-                    {row.wins}/{row.losses}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="h-64 sm:h-80">
+          {candles.length > 0 ? (
+            <CandleChart ref={chartRef} candles={candles} liveCandle={liveCandle} markers={markers} activeOrders={activeOrderLines} srLevels={srLevels} fill />
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-slate-500 px-4 text-center">
+              {loadingChart || scanStatus === 'scanning' ? 'Carregando...' : 'Aguardando a verificação inicial...'}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Aviso de entrada ao vivo: o setup da estrategia escolhida acabou de se completar na
-          ultima vela fechada — a vela se formando agora e a entrada (compra ou venda). O
-          circulo amarelo "ENTRADA" no grafico (ver markers acima) reforca a mesma coisa
-          visualmente em cima da propria vela. */}
       {pendingSignal && (
         <div
-          className={`px-3 sm:px-6 py-1.5 flex items-center gap-2 text-sm font-bold border-b animate-pulse ${
-            pendingSignal === 'CALL'
-              ? 'bg-emerald-600/90 border-emerald-500 text-white'
-              : 'bg-rose-600/90 border-rose-500 text-white'
+          className={`mx-3 sm:mx-6 mt-3 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm font-bold animate-pulse ${
+            pendingSignal === 'CALL' ? 'bg-emerald-600/90 text-white' : 'bg-rose-600/90 text-white'
           }`}
         >
           <span className="text-base">🔔</span>
           ENTRADA AGORA — {pendingSignal === 'CALL' ? 'COMPRA (CALL)' : 'VENDA (PUT)'}
         </div>
       )}
-      {chartError && (
-        <div className="px-3 sm:px-6 py-1 text-xs text-rose-400 border-b border-slate-800 bg-rose-950/20">{chartError}</div>
-      )}
 
       {/* Acompanhamento das entradas manuais enviadas (pode haver 2+ simultaneas no mesmo
-          ativo): preco de entrada (mesma linha tracejada do grafico), tempo restante ate a vela
-          de expiracao fechar, se esta no lucro/prejuizo AGORA e quanto rende/perde no payout
-          vigente — ate o resultado real (WIN/LOSS/DOJI) chegar da corretora. Com 2+ entradas,
-          uma linha de totais soma tudo (valor em jogo, ganho/perda potencial, resultado ja
-          realizado) alem do detalhe de cada uma. */}
+          ativo): preco de entrada, tempo restante ate a vela de expiracao fechar, se esta no
+          lucro/prejuizo AGORA e quanto rende/perde no payout vigente — ate o resultado real
+          (WIN/LOSS/DOJI) chegar da corretora. */}
       {visibleBannerOrders.length > 0 && (
-        <div className="px-3 sm:px-6 py-1.5 text-xs border-b border-slate-800 bg-slate-900 text-slate-300 space-y-1">
+        <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300 space-y-1.5">
           {visibleBannerOrders.length > 1 && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-bold pb-1 border-b border-slate-700/60">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-bold pb-1.5 border-b border-slate-700/60">
               <span>{visibleBannerOrders.length} entradas</span>
               {openOrders.length > 0 && (
                 <>
                   <span>
-                    Total em jogo: <span className="text-white">{formatMoney(totalOpenAmount)}</span>
+                    Em jogo: <span className="text-white">{formatMoney(totalOpenAmount)}</span>
                   </span>
-                  <span className="text-emerald-400">Ganho total se tudo WIN: +{formatMoney(totalEstimatedGain)}</span>
-                  <span className="text-rose-400">Perda total se tudo LOSS: -{formatMoney(totalOpenAmount)}</span>
+                  <span className="text-emerald-400">Se tudo WIN: +{formatMoney(totalEstimatedGain)}</span>
                 </>
               )}
               {visibleBannerOrders.some((o) => o.status !== 'OPEN') && (
@@ -1157,11 +1125,10 @@ export function ChartPage() {
                 : null;
             const estimatedGain = order.payoutPercentage !== null ? order.amount * order.payoutPercentage : null;
             return (
-              <div key={order.signalId} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <div key={order.signalId} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="font-bold">
                   {order.direction === 'CALL' ? '⬆ COMPRA' : '⬇ VENDA'} @ {formatPrice(order.entryPrice)} ({formatMoney(order.amount)})
                 </span>
-
                 {order.status === 'OPEN' ? (
                   <>
                     <span>
@@ -1169,17 +1136,11 @@ export function ChartPage() {
                     </span>
                     {isInProfitNow !== null && (
                       <span className={`font-semibold ${isInProfitNow ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {isInProfitNow ? '▲ No lucro agora' : '▼ No prejuízo agora'}
+                        {isInProfitNow ? '▲ no lucro' : '▼ no prejuízo'}
                       </span>
                     )}
                     <span>
-                      Ganho se WIN:{' '}
-                      <span className="font-semibold text-emerald-400">
-                        {estimatedGain !== null ? `+${formatMoney(estimatedGain)}` : '—'}
-                      </span>
-                    </span>
-                    <span>
-                      Perda se LOSS: <span className="font-semibold text-rose-400">-{formatMoney(order.amount)}</span>
+                      Se WIN: <span className="font-semibold text-emerald-400">{estimatedGain !== null ? `+${formatMoney(estimatedGain)}` : '—'}</span>
                     </span>
                   </>
                 ) : (
@@ -1188,10 +1149,8 @@ export function ChartPage() {
                       order.status === 'WIN' ? 'text-emerald-400' : order.status === 'LOSS' ? 'text-rose-400' : 'text-slate-400'
                     }`}
                   >
-                    Resultado: {order.status}
-                    {order.pnl !== undefined && (
-                      <span className="ml-2">{order.pnl >= 0 ? `+${formatMoney(order.pnl)}` : formatMoney(order.pnl)}</span>
-                    )}
+                    {order.status}
+                    {order.pnl !== undefined && <span className="ml-1">{order.pnl >= 0 ? `+${formatMoney(order.pnl)}` : formatMoney(order.pnl)}</span>}
                   </span>
                 )}
               </div>
@@ -1200,333 +1159,121 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Grafico + botoes Comprar/Vender ao lado (sm+: desktop e celular deitado — a largura
-          ja passa de 640px nessa orientacao na maioria dos aparelhos). Em celular em pe, os
-          botoes vao pra uma barra embaixo (ver mais abaixo). */}
-      <div className="flex">
-        <div className="flex-1 min-w-0 h-[60vh] sm:h-[70vh]">
-          {candles.length > 0 ? (
-            <CandleChart
-              ref={chartRef}
-              candles={candles}
-              liveCandle={liveCandle}
-              markers={markers}
-              activeOrders={activeOrderLines}
-              srLevels={showSRIndicator ? srLevels : []}
-              fill
+      {/* Entrada manual — clique SEMPRE explicito do usuario, nunca automatico (ver comentario
+          no topo do arquivo). DEMO/REAL e Gale ficam aqui tambem (vieram do antigo TradePanel,
+          que foi removido — essa e agora a UNICA forma de entrar manualmente na tela). */}
+      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-2 text-sm text-slate-300 min-w-0">
+            <span className="text-lg shrink-0">✋</span>
+            <span className="whitespace-nowrap">Entrada manual</span>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => changeMode('DEMO')}
+              className={`rounded-md px-2 py-1 text-[11px] font-semibold border ${
+                settings?.mode === 'DEMO' ? 'bg-sky-700 border-sky-500 text-white' : 'border-slate-700 text-slate-400'
+              }`}
+            >
+              DEMO
+            </button>
+            <button
+              type="button"
+              onClick={() => changeMode('REAL')}
+              className={`rounded-md px-2 py-1 text-[11px] font-semibold border ${
+                settings?.mode === 'REAL' ? 'bg-rose-700 border-rose-500 text-white' : 'border-slate-700 text-slate-400'
+              }`}
+            >
+              REAL
+            </button>
+          </div>
+        </div>
+        <span className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 mb-3">
+          Operação manual
+        </span>
+
+        <div className="flex items-center justify-between gap-3 mb-3 text-sm flex-wrap">
+          <label className="flex items-center gap-2">
+            <span className="text-slate-500">Valor</span>
+            <input
+              type="number"
+              min={5}
+              value={settings?.entryAmount ?? ''}
+              onChange={(e) => updateSettingsQuick({ entryAmount: Math.max(5, Number(e.target.value)) })}
+              className="w-20 bg-slate-800 border border-slate-700 rounded-md px-2 py-1"
             />
-          ) : (
-            <div className="h-full flex items-center justify-center text-sm text-slate-500 px-4 text-center">
-              {loadingChart || scanStatus === 'scanning' ? 'Carregando...' : 'Escolha um ativo e toque em "Carregar".'}
-            </div>
-          )}
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-slate-500">Gale</span>
+            <select
+              value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
+              onChange={(e) => changeGale(Number(e.target.value) as 0 | 1 | 2)}
+              className="bg-slate-800 border border-slate-700 rounded-md px-1.5 py-1"
+            >
+              <option value={0}>Sem Gale</option>
+              <option value={1}>Gale 1</option>
+              <option value={2}>Gale 2</option>
+            </select>
+          </label>
+          <div className="text-slate-500">
+            Expiração: <span className="text-slate-200 font-medium">1 minuto</span>
+          </div>
         </div>
 
-        <div className="hidden sm:flex w-28 md:w-40 shrink-0 border-l border-slate-800 bg-slate-950 flex-col gap-2 p-2 overflow-y-auto">
-          <TradePanel
-            settings={settings}
-            now={now}
-            pendingSignal={pendingSignal}
-            orderStatus={orderStatus}
-            onBuy={() => placeOrder('CALL')}
-            onSell={() => placeOrder('PUT')}
-            onChangeMode={changeMode}
-            onChangeAmount={(amount) => updateSettingsQuick({ entryAmount: amount })}
-            onChangeGale={changeGale}
-          />
-          <div className="pt-1 text-center text-[11px] text-slate-400 space-y-1">
-            <div className="truncate font-medium text-slate-200">{nameOf(selectedAssetId) || '—'}</div>
-            <div>{currentPrice !== null ? formatPrice(currentPrice) : '—'}</div>
-            {best && best !== 'loading' && <div className="text-emerald-400 font-semibold">{formatPct(best.winRate)}</div>}
-          </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => placeOrder('PUT')}
+            disabled={orderStatus === 'placing'}
+            className={`rounded-xl py-3.5 text-base font-bold tracking-wide transition-colors disabled:opacity-50 ${
+              pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-600 hover:bg-rose-500'
+            }`}
+          >
+            ↓ VENDER
+          </button>
+          <button
+            type="button"
+            onClick={() => placeOrder('CALL')}
+            disabled={orderStatus === 'placing'}
+            className={`rounded-xl py-3.5 text-base font-bold tracking-wide transition-colors disabled:opacity-50 ${
+              pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-600 hover:bg-emerald-500'
+            }`}
+          >
+            ↑ COMPRAR
+          </button>
         </div>
       </div>
 
       {orderMessage && (
-        <div
-          className={`px-3 sm:px-6 py-1 text-xs border-t ${
-            orderStatus === 'placed'
-              ? 'text-emerald-400 border-emerald-900 bg-emerald-950/20'
-              : 'text-rose-400 border-rose-900 bg-rose-950/20'
-          }`}
-        >
-          {orderMessage}
-        </div>
+        <div className={`mx-3 sm:mx-6 mt-2 text-xs ${orderStatus === 'placed' ? 'text-emerald-400' : 'text-rose-400'}`}>{orderMessage}</div>
       )}
 
-      {/* Barra inferior — so em celular em pe (sm:hidden), onde nao ha largura pros botoes
-          ficarem do lado sem espremer o grafico. */}
-      <div className="sm:hidden border-t border-slate-800 bg-slate-950 px-3 py-2.5">
-        <TradePanel
-          settings={settings}
-          now={now}
-          pendingSignal={pendingSignal}
-          orderStatus={orderStatus}
-          horizontal
-          onBuy={() => placeOrder('CALL')}
-          onSell={() => placeOrder('PUT')}
-          onChangeMode={changeMode}
-          onChangeAmount={(amount) => updateSettingsQuick({ entryAmount: amount })}
-          onChangeGale={changeGale}
-        />
-        <div className="mt-2 flex items-center gap-4 text-xs text-slate-400">
+      {/* Ultima operacao — a mais recente ja RESOLVIDA entre as entradas desta sessao. */}
+      {lastOrder && (
+        <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center justify-between">
           <div>
-            <div className="text-slate-500">Ativo</div>
-            <div className="text-slate-200 font-medium">{nameOf(selectedAssetId) || '—'}</div>
-          </div>
-          <div>
-            <div className="text-slate-500">Preço</div>
-            <div className="text-slate-200 font-medium">{currentPrice !== null ? formatPrice(currentPrice) : '—'}</div>
-          </div>
-          {best && best !== 'loading' && (
-            <div>
-              <div className="text-slate-500">Taxa de acerto</div>
-              <div className="text-emerald-400 font-semibold">{formatPct(best.winRate)}</div>
+            <div className="text-xs text-slate-500">Última operação</div>
+            <div className="font-bold">
+              {lastOrder.direction === 'CALL' ? 'COMPRA' : 'VENDA'} ·{' '}
+              {new Date(lastOrder.resolvedAt ?? Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
             </div>
-          )}
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-slate-500">Resultado</div>
+            <div
+              className={`font-bold flex items-center gap-1 justify-end ${
+                lastOrder.status === 'WIN' ? 'text-emerald-400' : lastOrder.status === 'LOSS' ? 'text-rose-400' : 'text-slate-400'
+              }`}
+            >
+              {lastOrder.pnl !== undefined ? (lastOrder.pnl >= 0 ? `+${formatMoney(lastOrder.pnl)}` : formatMoney(lastOrder.pnl)) : lastOrder.status}
+              {lastOrder.status === 'WIN' && <span>✓</span>}
+              {lastOrder.status === 'LOSS' && <span>✕</span>}
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* Progresso ao vivo das ate 20 estrategias do ranking — abaixo do grafico, SEMPRE
-          visivel (mesmo vazia), pra nao parecer que nada esta acontecendo enquanto o usuario
-          espera. Ordenada da mais perto de confirmar pra mais longe; a que acabou de confirmar
-          (pronta pra entrar na proxima vela) fica em destaque no topo. Clicar troca o grafico
-          direto pro ativo+estrategia daquela linha. */}
-      <div className="px-3 sm:px-6 py-3 border-t border-slate-800 bg-slate-950">
-        <div className="text-xs font-semibold text-slate-400 mb-2">🔔 Estratégias do ranking se formando ao vivo</div>
-        {sortedWatchlist.length === 0 ? (
-          <div className="text-xs text-slate-600 py-2">
-            Nenhuma em formação no momento — vigiando os {scanRanking.length || 0} ativos do ranking em segundo plano.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-            {sortedWatchlist.map(([key, item]) => {
-              const isCancelled = item.cancelledAt !== undefined;
-              const isActiveChartRow = item.activeId === watchingAssetId && item.strategyId === strategyMode;
-              // So pro par que esta de fato aberto no grafico a gente TEM a vela ao vivo (preco
-              // tick a tick) pra saber se ela esta indo a favor ou contra a direcao esperada —
-              // pros demais da lista (vigiados so em segundo plano, sem assinatura de preco
-              // aberta) nao da pra saber isso sem assinar TODOS eles, entao continuam so com a
-              // estimativa por tempo decorrido.
-              const liveDir = isActiveChartRow && liveCandle ? liveCandleDirection(liveCandle) : null;
-              // A linha da vigilancia chega via push do servidor (so reavalia apos o fechamento
-              // de vela + folga de 2s, ver WatchlistWatcher) — pro par que esta de fato aberto no
-              // grafico, ja temos uma fonte MAIS fresca (checkPendingSignal, rechecada a cada
-              // segundo nos ultimos 10s, ver ENTRY_CONFIRM_WINDOW_SECONDS): o grafico podia
-              // mostrar a 4a confirmacao enquanto essa linha ainda mostrava a 3a, so por nao ter
-              // chegado o push do servidor ainda. Pra essa linha (so essa, so quando bate a MESMA
-              // estrategia de totalStages) usa o progresso do grafico em vez do que veio do
-              // servidor, pra nunca mostrar algo mais ATRASADO do que o que o usuario ja ve.
-              // IMPORTANTE: quando o grafico e mais fresco, usa o valor dele DIRETO — nunca
-              // Math.max/OR com o valor antigo do servidor. Uma quebra de padrao pode fazer o
-              // stage CAIR (ex.: a 4a confirmacao nao se sustentou, um setup novo comecou do
-              // zero na 1a) — um Math.max tratava isso como "so sobe", entao a linha ficava
-              // presa mostrando a 4a confirmacao antiga mesmo com o grafico ja na 1a de novo.
-              const chartIsFresher = isActiveChartRow && chartProgressTotalStages === item.progress.totalStages;
-              const effectiveStage = chartIsFresher ? chartSetupCandleTimes.length : item.progress.stage;
-              const effectiveReadyNow = chartIsFresher ? pendingSignal !== null : item.progress.readyNow;
-              const effectiveDirection = chartIsFresher ? chartProgressDirection : item.progress.direction;
-              const formingAgainstPattern =
-                !effectiveReadyNow && effectiveDirection !== null && liveDir !== null && liveDir !== effectiveDirection;
-              // 100% = pronta pra entrar na proxima vela. Entre uma confirmacao e a proxima, a
-              // barra agora cresce SUAVEMENTE a cada segundo conforme a vela atual vai se
-              // formando (em vez de ficar parada ate o fechamento e so entao pular pro proximo
-              // degrau) — usa o mesmo relogio de parede do contador de entrada, nunca passa do
-              // teto do proximo degrau (90% do caminho ate ele) pra nao sugerir confirmacao que
-              // ainda nao aconteceu de verdade. Se a vela ao vivo do grafico aberto ja esta
-              // formando NA DIRECAO CONTRARIA da esperada, a barra para de crescer (fica so no
-              // ultimo degrau confirmado) em vez de seguir subindo rumo a um 3o sinal que a
-              // propria vela atual ja esta desmentindo.
-              const stepSize = 100 / item.progress.totalStages;
-              const elapsedFraction = formingAgainstPattern ? 0 : Math.min(1, (60 - secondsToMinuteClose) / 60);
-              const percent =
-                isCancelled || effectiveReadyNow
-                  ? 100
-                  : Math.min(100, Math.round(effectiveStage * stepSize + stepSize * elapsedFraction * 0.9));
-              const barColor = isCancelled
-                ? 'bg-slate-500'
-                : effectiveReadyNow
-                  ? effectiveDirection === 'CALL'
-                    ? 'bg-emerald-400'
-                    : 'bg-rose-400'
-                  : 'bg-sky-500';
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setStrategyMode(item.strategyId);
-                    loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
-                  }}
-                  className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm text-left transition-colors ${
-                    isActiveChartRow ? 'ring-2 ring-sky-400' : ''
-                  } ${
-                    isCancelled
-                      ? 'font-bold bg-slate-800/80 border-slate-500 text-slate-300'
-                      : effectiveReadyNow
-                        ? `font-bold animate-pulse ${
-                            effectiveDirection === 'CALL'
-                              ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                              : 'bg-rose-600/20 border-rose-500 text-rose-300'
-                          }`
-                        : 'border-slate-700 text-slate-300 hover:bg-slate-900'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate">
-                      {isActiveChartRow && <span className="mr-1.5 text-sky-400" title="Grafico aberto na tela">📍</span>}
-                      {item.assetName} <span className="text-slate-500 font-normal">· {item.strategyName}</span>
-                      {item.stats && (
-                        <span className="ml-2 text-slate-500 font-normal" title="Placar dessa estrategia nesse ativo hoje">
-                          ({item.stats.wins}W {item.stats.losses}L hoje)
-                        </span>
-                      )}
-                      {!isCancelled && effectiveDirection && (
-                        <span className={`ml-2 font-semibold ${effectiveDirection === 'CALL' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {effectiveDirection === 'CALL' ? '⬆ CALL' : '⬇ PUT'}
-                        </span>
-                      )}
-                    </span>
-                    <span className="shrink-0 whitespace-nowrap">
-                      {isCancelled
-                        ? '❌ Não entre'
-                        : effectiveReadyNow
-                          ? `Entrada em ${secondsToMinuteClose}s`
-                          : formingAgainstPattern
-                            ? `${effectiveStage}ª confirmação de ${item.progress.totalStages} · vela atual contra`
-                            : `${effectiveStage}ª confirmação de ${item.progress.totalStages} · ${percent}%`}
-                    </span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${formingAgainstPattern ? 'bg-amber-500' : barColor}`}
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
 
-interface TradePanelProps {
-  settings: Settings | null;
-  now: Date;
-  pendingSignal: Direction | null;
-  orderStatus: 'idle' | 'placing' | 'placed' | 'blocked' | 'error';
-  horizontal?: boolean;
-  onBuy: () => void;
-  onSell: () => void;
-  onChangeMode: (mode: AppMode) => void;
-  onChangeAmount: (amount: number) => void;
-  onChangeGale: (level: 0 | 1 | 2) => void;
-}
-
-/** Relogio + modo (Demo/Real) + valor + Gale + botoes Comprar/Vender — tudo que precisa pra
- * entrar manualmente sem sair da tela do grafico. Usado tanto na coluna lateral (telas
- * largas) quanto na barra inferior (celular em pe), so muda o arranjo (`horizontal`). */
-function TradePanel({
-  settings,
-  now,
-  pendingSignal,
-  orderStatus,
-  horizontal,
-  onBuy,
-  onSell,
-  onChangeMode,
-  onChangeAmount,
-  onChangeGale,
-}: TradePanelProps) {
-  const placing = orderStatus === 'placing';
-  const timeStr = now.toLocaleTimeString('pt-BR', { hour12: false });
-  const secondsLeft = 60 - now.getSeconds(); // segundos ate a vela M1 atual fechar
-
-  // Em `horizontal` (barra inferior do celular em pe), relogio + DEMO/REAL + valor/Gale iam
-  // todos numa UNICA linha ao lado dos botoes Comprar/Vender — numa tela estreita isso
-  // espremia tudo (botoes minusculos, texto cortando) em vez de ficar usavel. Agora essa
-  // linha de cima quebra com flex-wrap se precisar, e Comprar/Vender formam uma segunda
-  // linha por conta, ocupando a largura toda — pedido explicito do usuario.
-  return (
-    <div className={horizontal ? 'flex flex-col gap-2' : 'space-y-2'}>
-      <div className={horizontal ? 'flex flex-wrap items-center gap-2' : 'space-y-2'}>
-        <div className={horizontal ? 'flex items-center gap-2 text-xs' : 'text-center'}>
-          <div className="font-mono text-base font-semibold text-slate-100 tabular-nums">{timeStr}</div>
-          <div className={`text-[10px] ${secondsLeft <= 5 ? 'text-amber-400 font-semibold' : 'text-slate-500'}`}>
-            {secondsLeft}s p/ fechar
-          </div>
-        </div>
-
-        <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
-          <button
-            type="button"
-            onClick={() => onChangeMode('DEMO')}
-            className={`rounded-md px-2 py-1 text-[10px] font-semibold border ${
-              settings?.mode === 'DEMO' ? 'bg-sky-700 border-sky-500 text-white' : 'border-slate-700 text-slate-400'
-            }`}
-          >
-            DEMO
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeMode('REAL')}
-            className={`rounded-md px-2 py-1 text-[10px] font-semibold border ${
-              settings?.mode === 'REAL' ? 'bg-rose-700 border-rose-500 text-white' : 'border-slate-700 text-slate-400'
-            }`}
-          >
-            REAL
-          </button>
-        </div>
-
-        <div className={horizontal ? 'flex items-center gap-1' : 'flex gap-1'}>
-          <input
-            type="number"
-            min={5}
-            value={settings?.entryAmount ?? ''}
-            onChange={(e) => onChangeAmount(Math.max(5, Number(e.target.value)))}
-            className="w-16 bg-slate-900 border border-slate-700 rounded-md px-1.5 py-1 text-xs"
-            title="Valor da entrada (R$)"
-          />
-          <select
-            value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
-            onChange={(e) => onChangeGale(Number(e.target.value) as 0 | 1 | 2)}
-            className="bg-slate-900 border border-slate-700 rounded-md px-1 py-1 text-xs"
-            title="Gale (reentrada após LOSS)"
-          >
-            <option value={0}>Sem Gale</option>
-            <option value={1}>Gale 1</option>
-            <option value={2}>Gale 2</option>
-          </select>
-        </div>
-      </div>
-
-      <div className={horizontal ? 'flex items-stretch gap-2' : 'space-y-1.5'}>
-        <button
-          type="button"
-          onClick={onSell}
-          disabled={placing}
-          title={settings?.mode === 'REAL' ? 'Envia ordem com dinheiro de verdade' : 'Envia ordem (conta demo)'}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-bold tracking-wide transition-colors disabled:opacity-50 ${
-            pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-700/90 hover:bg-rose-600/90'
-          }`}
-        >
-          VENDER
-        </button>
-        <button
-          type="button"
-          onClick={onBuy}
-          disabled={placing}
-          title={settings?.mode === 'REAL' ? 'Envia ordem com dinheiro de verdade' : 'Envia ordem (conta demo)'}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-bold tracking-wide transition-colors disabled:opacity-50 ${
-            pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-700/90 hover:bg-emerald-600/90'
-          }`}
-        >
-          COMPRAR
-        </button>
-      </div>
-    </div>
-  );
-}
