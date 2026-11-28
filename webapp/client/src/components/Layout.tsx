@@ -5,14 +5,14 @@ import { Header } from './Header.js';
 import { api } from '../api.js';
 import { useLiveSocket } from '../hooks/useLiveSocket.js';
 
-// So Grafico e Historico aparecem no menu (pedido explicito do usuario: o app tinha ficado
-// complexo demais, mas precisa poder consultar as entradas ja feitas). As demais telas
-// (Monitor, Padrao, Descobrir, Classicas, Validacao 30D, Configuracoes, Logs) CONTINUAM
-// existindo e acessiveis por URL direta — so nao tem mais link na barra lateral. Ver App.tsx
-// pras rotas completas.
+// So Painel, Historico e Ajustes aparecem no menu (pedido explicito do usuario, mockup "Painel"
+// com 3 abas). As demais telas (Monitor, Padrao, Descobrir, Classicas, Validacao 30D, Logs)
+// CONTINUAM existindo e acessiveis por URL direta — so nao tem mais link na barra lateral. Ver
+// App.tsx pras rotas completas.
 const NAV_ITEMS = [
-  { to: '/', label: 'Gráfico', hint: 'Tempo real', icon: '📊' },
+  { to: '/', label: 'Painel', hint: 'Tempo real', icon: '📊' },
   { to: '/operations', label: 'Histórico', hint: 'Entradas já feitas', icon: '📋' },
+  { to: '/settings', label: 'Ajustes', hint: 'Configurações', icon: '⚙️' },
 ];
 
 interface LayoutProps {
@@ -70,9 +70,15 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
     }
   }, [events]);
 
-  async function toggleRobot() {
+  // DEMO/REAL agora e um dropdown compacto no cabecalho (mockup) — mesma confirmacao de
+  // seguranca de antes ao trocar PRA REAL (dinheiro de verdade), so que daqui em vez do
+  // antigo seletor dentro da tela do Grafico.
+  async function changeModeHeader(mode: AppMode) {
     if (!settings) return;
-    const next = await api.saveSettings({ robotActive: !settings.robotActive });
+    if (mode === 'REAL' && settings.mode !== 'REAL') {
+      if (!window.confirm('Mudar para REAL faz o app enviar ordens com DINHEIRO DE VERDADE da sua conta Polarium. Confirma?')) return;
+    }
+    const next = await api.saveSettings({ mode });
     setSettings(next);
   }
 
@@ -87,11 +93,10 @@ export function Layout({ requiresLogin, onLoggedOut }: LayoutProps) {
         connected={connected}
         brokerAdapter={health?.brokerAdapter ?? 'mock'}
         mode={settings?.mode ?? 'OBSERVATION'}
-        robotActive={settings?.robotActive ?? false}
         balance={balance}
         dailyResult={dailyResult}
         settings={settings}
-        onToggleRobot={toggleRobot}
+        onChangeMode={changeModeHeader}
         showLogout={requiresLogin}
         onLogout={logout}
       />

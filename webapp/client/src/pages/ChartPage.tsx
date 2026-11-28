@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import type { AppEvent, AppMode, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
+import type { AppEvent, AssetInfo, Candle, ClassicStrategyId, Direction, Settings } from '@polarium12c/shared';
 import { api, type AssetScanRanking, type WatchlistEntry } from '../api.js';
 import {
   CandleChart,
@@ -571,13 +571,6 @@ export function ChartPage() {
     }
   }
 
-  function changeMode(mode: AppMode) {
-    if (mode === 'REAL' && settings?.mode !== 'REAL') {
-      if (!window.confirm('Mudar para REAL faz o app enviar ordens com DINHEIRO DE VERDADE da sua conta Polarium. Confirma?')) return;
-    }
-    updateSettingsQuick({ mode });
-  }
-
   function changeGale(level: 0 | 1 | 2) {
     updateSettingsQuick({ galeEnabled: level > 0, galeMaxLevels: level });
   }
@@ -835,6 +828,47 @@ export function ChartPage() {
     );
   }
 
+  /** Versao simplificada de uma linha da watchlist (mockup v2, card "Estratégias se formando"):
+   * so o nome do ativo, a sub-estrategia, uma barra de progresso e "X de Y" — sem %, sem
+   * CALL/PUT, sem placar. A versao com todos os detalhes (renderWatchlistRow) continua no
+   * seletor de ativo do cabecalho do grafico. */
+  function renderSimpleWatchlistRow(key: string, item: WatchlistItem) {
+    const isActiveChartRow = item.activeId === watchingAssetId && item.strategyId === strategyMode;
+    const chartIsFresher = isActiveChartRow && chartProgressTotalStages === item.progress.totalStages;
+    const effectiveStage = chartIsFresher ? chartSetupCandleTimes.length : item.progress.stage;
+    const effectiveReadyNow = chartIsFresher ? pendingSignal !== null : item.progress.readyNow;
+    const percent = effectiveReadyNow ? 100 : Math.min(100, Math.round((effectiveStage / item.progress.totalStages) * 100));
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => {
+          setStrategyMode(item.strategyId);
+          loadChartFor(item.activeId, item.strategyId, SCAN_DAYS);
+        }}
+        className={`w-full flex items-center justify-between gap-3 text-left rounded-lg -mx-1 px-1 py-1 hover:bg-slate-800/50 ${
+          isActiveChartRow ? 'ring-1 ring-sky-400' : ''
+        }`}
+      >
+        <div className="min-w-0">
+          <div className="font-semibold text-sm text-slate-100 truncate">{item.assetName}</div>
+          <div className="text-xs text-slate-500 truncate">{item.strategyName}</div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-24 sm:w-32 h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full ${effectiveReadyNow ? 'bg-emerald-400' : 'bg-cyan-400'}`}
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <span className="text-xs text-slate-400 whitespace-nowrap">
+            {effectiveReadyNow ? 'pronta' : `${effectiveStage} de ${item.progress.totalStages}`}
+          </span>
+        </div>
+      </button>
+    );
+  }
+
   const resolvedOrders = activeOrders.filter((o) => o.status !== 'OPEN');
   const lastOrder = resolvedOrders.length > 0 ? resolvedOrders[resolvedOrders.length - 1]! : null;
 
@@ -863,211 +897,83 @@ export function ChartPage() {
         </div>
       )}
 
-      {/* Robo ativo: mostra o melhor par ativo+estrategia do ranking (mesmo escolhido pela
-          varredura automatica) — SO avisa, a entrada continua exigindo clique manual em
-          Comprar/Vender mais abaixo (nenhuma ordem e enviada sozinha por essa estrategia). */}
-      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-emerald-800/60 bg-emerald-950/10 p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 font-bold text-emerald-400 text-sm">
-            <span className="text-lg">🤖</span> Robô {settings?.robotActive ? 'ativo' : 'pausado'}
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => runFullScan()}
-              disabled={scanStatus === 'scanning'}
-              title="Verificar de novo agora"
-              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50 px-2 py-1.5 text-xs"
-            >
-              {scanStatus === 'scanning' ? '🔄' : '🔄'}
-            </button>
-            <button
-              type="button"
-              onClick={() => settings && updateSettingsQuick({ robotActive: !settings.robotActive })}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap ${
-                settings?.robotActive ? 'bg-rose-700 hover:bg-rose-600 text-white' : 'bg-emerald-700 hover:bg-emerald-600 text-white'
-              }`}
-            >
-              {settings?.robotActive ? '⏸ Pausar robô' : '▶ Retomar robô'}
-            </button>
-          </div>
-        </div>
-        <div className="mt-2 text-sm space-y-0.5 text-slate-300">
-          <div>
-            Estratégia:{' '}
-            <span className="font-semibold text-slate-100">
-              {best && best !== 'loading' ? best.name : scanStatus === 'scanning' ? 'verificando...' : '—'}
-            </span>
-          </div>
-          <div>
-            Ativo: <span className="font-semibold text-slate-100">{nameOf(selectedAssetId) || '—'}</span>
-          </div>
-          <div>
-            Próxima entrada:{' '}
-            {pendingSignal ? (
-              <span className="font-bold text-emerald-400 animate-pulse">
-                ENTRADA AGORA ({pendingSignal === 'CALL' ? 'COMPRA' : 'VENDA'})
-              </span>
-            ) : (
-              <span className="text-amber-400 font-medium">aguardando sinal</span>
-            )}
-          </div>
-        </div>
-        {scanStatus === 'error' && (
-          <div className="mt-2 text-xs text-rose-400">Falha ao verificar os ativos — toque no 🔄 pra tentar de novo.</div>
-        )}
-      </div>
-
-      {chartError && <div className="mx-3 sm:mx-6 mt-2 text-xs text-rose-400">{chartError}</div>}
-
-      {/* Estrategias se formando ao vivo — colapsavel: o cabecalho (chevron) liga/desliga o
-          card inteiro, e "Ver todas"/"Ver menos" alterna entre so as 2 mais perto de confirmar
-          e a lista inteira. Reaproveita a MESMA linha (renderWatchlistRow) que o seletor de
-          ativo do grafico ja usava, so que sempre visivel aqui (nao precisa abrir o chevron do
-          grafico so pra acompanhar o progresso). */}
-      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setWatchlistCardOpen((v) => !v)}
-          className="w-full flex items-center justify-between px-4 py-3"
-        >
-          <div className="flex items-center gap-2 text-left">
-            <span className="text-lg">🔔</span>
-            <div>
-              <div className="font-bold text-sm text-slate-100">Estratégias se formando ao vivo</div>
-              <div className="text-xs text-slate-500">Progresso das confirmações</div>
-            </div>
-          </div>
-          <span className={`text-slate-400 transition-transform shrink-0 ${watchlistCardOpen ? 'rotate-180' : ''}`}>⌃</span>
-        </button>
-
-        {watchlistCardOpen && (
-          <div className="px-4 pb-4 space-y-2">
-            {sortedWatchlist.length === 0 ? (
-              <div className="text-xs text-slate-500 py-1">
-                Nenhuma em formação no momento — vigiando os {scanRanking.length || 0} ativos do ranking em segundo plano.
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  {(watchlistShowAll ? sortedWatchlist : sortedWatchlist.slice(0, 2)).map(([key, item]) => renderWatchlistRow(key, item))}
-                </div>
-                {sortedWatchlist.length > 2 && (
-                  <button
-                    type="button"
-                    onClick={() => setWatchlistShowAll((v) => !v)}
-                    className="text-xs font-medium text-sky-400 hover:text-sky-300"
-                  >
-                    {watchlistShowAll ? 'Ver menos' : `Ver todas (${sortedWatchlist.length})`}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Valor da entrada + limites diarios (Stop loss / Meta) — mesmos campos de Settings que
-          ja existiam, so reorganizados nesse card compacto em vez de uma tela de Ajustes separada. */}
-      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
-        {editingLimits ? (
-          <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <label className="space-y-1">
-                <span className="text-slate-500">Valor</span>
-                <input
-                  type="number"
-                  min={5}
-                  value={settings?.entryAmount ?? ''}
-                  onChange={(e) => updateSettingsQuick({ entryAmount: Math.max(5, Number(e.target.value)) })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-slate-500">Stop loss</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={settings?.stopLossDaily ?? ''}
-                  onChange={(e) => updateSettingsQuick({ stopLossDaily: e.target.value === '' ? null : Number(e.target.value) })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-slate-500">Meta</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={settings?.stopWinDaily ?? ''}
-                  onChange={(e) => updateSettingsQuick({ stopWinDaily: e.target.value === '' ? null : Number(e.target.value) })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-md px-2 py-1.5"
-                />
-              </label>
-            </div>
-            <button type="button" onClick={() => setEditingLimits(false)} className="text-xs font-medium text-sky-400">
-              Concluir
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-4 text-sm">
-              <div>
-                <div className="text-xs text-slate-500">Valor</div>
-                <div className="font-bold whitespace-nowrap">{formatMoney(settings?.entryAmount ?? 0)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500">Stop loss</div>
-                <div className="font-bold whitespace-nowrap">
-                  {settings?.stopLossDaily ? formatMoney(settings.stopLossDaily) : '—'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500">Meta</div>
-                <div className="font-bold whitespace-nowrap">{settings?.stopWinDaily ? formatMoney(settings.stopWinDaily) : '—'}</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setEditingLimits(true)}
-              className="rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 px-2.5 py-1.5 text-xs font-medium shrink-0"
-            >
-              ✏️ Editar limites
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Grafico — cabecalho com o ativo atual + chevron que abre a lista de oportunidades do
-          ranking (trocar pra outro ativo/estrategia), igual ao menu suspenso do mockup. */}
-      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+      {/* Linha do ativo: nome (abre o seletor de oportunidades do ranking) + M1 + AO VIVO. */}
+      <div className="mx-3 sm:mx-6 mt-3 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => setShowAssetPicker((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2.5 border-b border-slate-800"
+          className="flex items-center gap-1.5 font-bold text-base min-w-0"
         >
-          <span className="font-semibold text-sm flex items-center gap-1.5">
-            {nameOf(selectedAssetId) || 'Escolha um ativo'} <span className="text-slate-500 font-normal">· M1</span>
-          </span>
-          <span className="flex items-center gap-2">
-            {watchingAssetId !== null && isLive && (
-              <span className="flex items-center gap-1 text-[11px] font-medium text-rose-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" /> AO VIVO
-              </span>
-            )}
-            <span className={`text-slate-400 transition-transform ${showAssetPicker ? 'rotate-180' : ''}`}>⌄</span>
-          </span>
+          <span className="truncate">{nameOf(selectedAssetId) || 'Escolha um ativo'}</span>
+          <span className={`text-slate-400 transition-transform shrink-0 ${showAssetPicker ? 'rotate-180' : ''}`}>⌄</span>
         </button>
+        <div className="flex items-center gap-2 text-xs shrink-0">
+          <span className="rounded-md border border-slate-700 px-2 py-1 font-semibold text-slate-300">M1</span>
+          {watchingAssetId !== null && isLive && (
+            <span className="flex items-center gap-1 rounded-full bg-emerald-950/60 px-2 py-1 font-medium text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> AO VIVO
+            </span>
+          )}
+        </div>
+      </div>
 
-        {showAssetPicker && (
-          <div className="border-b border-slate-800 max-h-56 overflow-y-auto p-2">
-            {sortedWatchlist.length === 0 ? (
-              <div className="px-1 py-2 text-xs text-slate-500">Nenhuma oportunidade no ranking no momento.</div>
-            ) : (
-              <div className="flex flex-col gap-1.5">{sortedWatchlist.map(([key, item]) => renderWatchlistRow(key, item))}</div>
-            )}
-          </div>
-        )}
+      {/* Seletor de oportunidades do ranking — trocar pra outro ativo/estrategia (mesma lista
+          reaproveitada no card "Estrategias se formando" mais abaixo). */}
+      {showAssetPicker && (
+        <div className="mx-3 sm:mx-6 mt-2 rounded-xl border border-slate-800 bg-slate-900 max-h-56 overflow-y-auto p-2">
+          {sortedWatchlist.length === 0 ? (
+            <div className="px-1 py-2 text-xs text-slate-500">Nenhuma oportunidade no ranking no momento.</div>
+          ) : (
+            <div className="flex flex-col gap-1.5">{sortedWatchlist.map(([key, item]) => renderWatchlistRow(key, item))}</div>
+          )}
+        </div>
+      )}
 
+      {/* Barra do robo — so avisa (estrategia/ativo escolhidos automaticamente pelo ranking em
+          segundo plano); a entrada continua exigindo clique manual em Comprar/Vender mais
+          abaixo, nenhuma ordem e enviada sozinha por essa barra. */}
+      <div className="mx-3 sm:mx-6 mt-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 flex items-center justify-between gap-2 text-xs">
+        <span className="flex items-center gap-1.5 text-slate-300 min-w-0 truncate">
+          <span className="text-sm shrink-0">🤖</span>
+          Robô:{' '}
+          {pendingSignal ? (
+            <strong className="text-emerald-400 animate-pulse">ENTRADA AGORA ({pendingSignal === 'CALL' ? 'COMPRA' : 'VENDA'})</strong>
+          ) : scanStatus === 'scanning' ? (
+            'verificando...'
+          ) : (
+            'aguardando confirmação'
+          )}
+        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => runFullScan()}
+            disabled={scanStatus === 'scanning'}
+            title="Verificar de novo agora"
+            className="rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50 px-1.5 py-1"
+          >
+            🔄
+          </button>
+          <button
+            type="button"
+            onClick={() => settings && updateSettingsQuick({ robotActive: !settings.robotActive })}
+            title={settings?.robotActive ? 'Pausar robô' : 'Retomar robô'}
+            className={`rounded-md px-1.5 py-1 font-semibold ${
+              settings?.robotActive ? 'bg-rose-700 hover:bg-rose-600 text-white' : 'bg-emerald-700 hover:bg-emerald-600 text-white'
+            }`}
+          >
+            {settings?.robotActive ? '⏸' : '▶'}
+          </button>
+        </div>
+      </div>
+      {scanStatus === 'error' && (
+        <div className="mx-3 sm:mx-6 mt-1 text-xs text-rose-400">Falha ao verificar os ativos — toque no 🔄 pra tentar de novo.</div>
+      )}
+      {chartError && <div className="mx-3 sm:mx-6 mt-1 text-xs text-rose-400">{chartError}</div>}
+
+      {/* Grafico — sem cabecalho proprio agora (o nome do ativo/M1/AO VIVO ja ficam na linha
+          acima, fora do card). */}
+      <div className="mx-3 sm:mx-6 mt-2 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
         <div className="h-64 sm:h-80">
           {candles.length > 0 ? (
             <CandleChart ref={chartRef} candles={candles} liveCandle={liveCandle} markers={markers} activeOrders={activeOrderLines} srLevels={srLevels} fill />
@@ -1159,119 +1065,127 @@ export function ChartPage() {
         </div>
       )}
 
+      {/* Estrategias se formando — colapsavel: o cabecalho (chevron) liga/desliga o card
+          inteiro, e "Ver todas"/"Ver menos" alterna entre so as 2 mais perto de confirmar e a
+          lista inteira. Visual simplificado (so a barra + "X de Y") — a versao detalhada (com
+          %, CALL/PUT, placar) continua no seletor de ativo acima (renderWatchlistRow). */}
+      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setWatchlistCardOpen((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3"
+        >
+          <span className="flex items-center gap-2 font-bold text-sm text-slate-100">
+            <span className="text-lg">📑</span> Estratégias se formando
+            {sortedWatchlist.length > 0 && (
+              <span className="flex items-center justify-center h-5 w-5 rounded-full bg-cyan-400 text-slate-950 text-[11px] font-bold">
+                {sortedWatchlist.length}
+              </span>
+            )}
+          </span>
+          <span className={`text-slate-400 transition-transform shrink-0 ${watchlistCardOpen ? 'rotate-180' : ''}`}>⌃</span>
+        </button>
+
+        {watchlistCardOpen && (
+          <div className="px-4 pb-4 space-y-3">
+            {sortedWatchlist.length === 0 ? (
+              <div className="text-xs text-slate-500 py-1">
+                Nenhuma em formação no momento — vigiando os {scanRanking.length || 0} ativos do ranking em segundo plano.
+              </div>
+            ) : (
+              <>
+                {(watchlistShowAll ? sortedWatchlist : sortedWatchlist.slice(0, 2)).map(([key, item]) => renderSimpleWatchlistRow(key, item))}
+                {sortedWatchlist.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistShowAll((v) => !v)}
+                    className="text-xs font-medium text-sky-400 hover:text-sky-300"
+                  >
+                    {watchlistShowAll ? 'Ver menos' : `Ver todas (${sortedWatchlist.length})`}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Ultima operacao — barra fina, a mais recente ja RESOLVIDA entre as entradas desta sessao. */}
+      {lastOrder && (
+        <div
+          className={`mx-3 sm:mx-6 mt-3 rounded-xl border-l-4 bg-slate-900 px-4 py-2.5 flex items-center justify-between text-sm ${
+            lastOrder.status === 'WIN' ? 'border-emerald-500' : lastOrder.status === 'LOSS' ? 'border-rose-500' : 'border-slate-500'
+          }`}
+        >
+          <span className="text-slate-300">
+            Última operação: <span className="font-bold text-slate-100">{lastOrder.direction === 'CALL' ? 'COMPRA' : 'VENDA'}</span>
+          </span>
+          <span
+            className={`font-bold ${
+              lastOrder.status === 'WIN' ? 'text-emerald-400' : lastOrder.status === 'LOSS' ? 'text-rose-400' : 'text-slate-400'
+            }`}
+          >
+            {lastOrder.pnl !== undefined ? (lastOrder.pnl >= 0 ? `+${formatMoney(lastOrder.pnl)}` : formatMoney(lastOrder.pnl)) : lastOrder.status}
+          </span>
+        </div>
+      )}
+
       {/* Entrada manual — clique SEMPRE explicito do usuario, nunca automatico (ver comentario
-          no topo do arquivo). DEMO/REAL e Gale ficam aqui tambem (vieram do antigo TradePanel,
-          que foi removido — essa e agora a UNICA forma de entrar manualmente na tela). */}
-      <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
-        <div className="flex items-center justify-between gap-2 mb-1.5">
-          <div className="flex items-center gap-2 text-sm text-slate-300 min-w-0">
-            <span className="text-lg shrink-0">✋</span>
-            <span className="whitespace-nowrap">Entrada manual</span>
-          </div>
-          <div className="flex gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => changeMode('DEMO')}
-              className={`rounded-md px-2 py-1 text-[11px] font-semibold border ${
-                settings?.mode === 'DEMO' ? 'bg-sky-700 border-sky-500 text-white' : 'border-slate-700 text-slate-400'
-              }`}
-            >
-              DEMO
-            </button>
-            <button
-              type="button"
-              onClick={() => changeMode('REAL')}
-              className={`rounded-md px-2 py-1 text-[11px] font-semibold border ${
-                settings?.mode === 'REAL' ? 'bg-rose-700 border-rose-500 text-white' : 'border-slate-700 text-slate-400'
-              }`}
-            >
-              REAL
-            </button>
-          </div>
+          no topo do arquivo). DEMO/REAL mudou pro cabecalho (dropdown) — ver Header.tsx. */}
+      <div className="mx-3 sm:mx-6 mt-3 grid grid-cols-3 gap-2 text-xs">
+        <label className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 block">
+          <div className="text-slate-500">Entrada</div>
+          <input
+            type="number"
+            min={5}
+            value={settings?.entryAmount ?? ''}
+            onChange={(e) => updateSettingsQuick({ entryAmount: Math.max(5, Number(e.target.value)) })}
+            className="w-full bg-transparent font-bold text-sm text-slate-100 focus:outline-none"
+          />
+        </label>
+        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+          <div className="text-slate-500">Expiração</div>
+          <div className="font-bold text-sm text-slate-100">1 min</div>
         </div>
-        <span className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 mb-3">
-          Operação manual
-        </span>
-
-        <div className="flex items-center justify-between gap-3 mb-3 text-sm flex-wrap">
-          <label className="flex items-center gap-2">
-            <span className="text-slate-500">Valor</span>
-            <input
-              type="number"
-              min={5}
-              value={settings?.entryAmount ?? ''}
-              onChange={(e) => updateSettingsQuick({ entryAmount: Math.max(5, Number(e.target.value)) })}
-              className="w-20 bg-slate-800 border border-slate-700 rounded-md px-2 py-1"
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="text-slate-500">Gale</span>
-            <select
-              value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
-              onChange={(e) => changeGale(Number(e.target.value) as 0 | 1 | 2)}
-              className="bg-slate-800 border border-slate-700 rounded-md px-1.5 py-1"
-            >
-              <option value={0}>Sem Gale</option>
-              <option value={1}>Gale 1</option>
-              <option value={2}>Gale 2</option>
-            </select>
-          </label>
-          <div className="text-slate-500">
-            Expiração: <span className="text-slate-200 font-medium">1 minuto</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => placeOrder('PUT')}
-            disabled={orderStatus === 'placing'}
-            className={`rounded-xl py-3.5 text-base font-bold tracking-wide transition-colors disabled:opacity-50 ${
-              pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-600 hover:bg-rose-500'
-            }`}
+        <label className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 block">
+          <div className="text-slate-500">Gale</div>
+          <select
+            value={settings?.galeEnabled ? settings.galeMaxLevels : 0}
+            onChange={(e) => changeGale(Number(e.target.value) as 0 | 1 | 2)}
+            className="w-full bg-transparent font-bold text-sm text-slate-100 focus:outline-none"
           >
-            ↓ VENDER
-          </button>
-          <button
-            type="button"
-            onClick={() => placeOrder('CALL')}
-            disabled={orderStatus === 'placing'}
-            className={`rounded-xl py-3.5 text-base font-bold tracking-wide transition-colors disabled:opacity-50 ${
-              pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-600 hover:bg-emerald-500'
-            }`}
-          >
-            ↑ COMPRAR
-          </button>
-        </div>
+            <option value={0} className="bg-slate-900">Sem gale</option>
+            <option value={1} className="bg-slate-900">Gale 1</option>
+            <option value={2} className="bg-slate-900">Gale 2</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="mx-3 sm:mx-6 mt-3 grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => placeOrder('PUT')}
+          disabled={orderStatus === 'placing'}
+          className={`rounded-xl py-3.5 text-base font-bold tracking-wide transition-colors disabled:opacity-50 ${
+            pendingSignal === 'PUT' ? 'bg-rose-500 ring-2 ring-rose-300 animate-pulse' : 'bg-rose-600 hover:bg-rose-500'
+          }`}
+        >
+          ↓ VENDER
+        </button>
+        <button
+          type="button"
+          onClick={() => placeOrder('CALL')}
+          disabled={orderStatus === 'placing'}
+          className={`rounded-xl py-3.5 text-base font-bold tracking-wide transition-colors disabled:opacity-50 ${
+            pendingSignal === 'CALL' ? 'bg-emerald-500 ring-2 ring-emerald-300 animate-pulse' : 'bg-emerald-600 hover:bg-emerald-500'
+          }`}
+        >
+          ↑ COMPRAR
+        </button>
       </div>
 
       {orderMessage && (
         <div className={`mx-3 sm:mx-6 mt-2 text-xs ${orderStatus === 'placed' ? 'text-emerald-400' : 'text-rose-400'}`}>{orderMessage}</div>
-      )}
-
-      {/* Ultima operacao — a mais recente ja RESOLVIDA entre as entradas desta sessao. */}
-      {lastOrder && (
-        <div className="mx-3 sm:mx-6 mt-3 rounded-xl border border-slate-800 bg-slate-900 p-4 flex items-center justify-between">
-          <div>
-            <div className="text-xs text-slate-500">Última operação</div>
-            <div className="font-bold">
-              {lastOrder.direction === 'CALL' ? 'COMPRA' : 'VENDA'} ·{' '}
-              {new Date(lastOrder.resolvedAt ?? Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-xs text-slate-500">Resultado</div>
-            <div
-              className={`font-bold flex items-center gap-1 justify-end ${
-                lastOrder.status === 'WIN' ? 'text-emerald-400' : lastOrder.status === 'LOSS' ? 'text-rose-400' : 'text-slate-400'
-              }`}
-            >
-              {lastOrder.pnl !== undefined ? (lastOrder.pnl >= 0 ? `+${formatMoney(lastOrder.pnl)}` : formatMoney(lastOrder.pnl)) : lastOrder.status}
-              {lastOrder.status === 'WIN' && <span>✓</span>}
-              {lastOrder.status === 'LOSS' && <span>✕</span>}
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
