@@ -173,6 +173,12 @@ export interface Settings {
   robotActive: boolean;
   /** Quantidade de dias que a analise consolidada por ativo (botao no Monitor) olha para tras. */
   analysisDays: number;
+  /** Pedido explicito: em vez de enviar a ordem no instante do clique, espera ate faltarem
+   * exatamente 2s pro minuto fechar (2s antes da proxima vela comecar) e so ENTAO envia — da
+   * tempo de ver a vela quase fechada antes da entrada disparar de verdade. So client-side
+   * (ver ChartPage.placeOrder): o servidor nunca sabe que uma ordem ficou "agendada", so recebe
+   * a chamada normal de /api/orders/manual no momento exato em que ela e disparada. */
+  delayedEntryEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -189,6 +195,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'DEMO',
   robotActive: false,
   analysisDays: 7,
+  delayedEntryEnabled: false,
 };
 
 export interface DailyResult {

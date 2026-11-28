@@ -177,6 +177,9 @@ export function ChartPage() {
   const [editingLimits, setEditingLimits] = useState(false); // card Valor/Stop loss/Meta
   const [watchlistCardOpen, setWatchlistCardOpen] = useState(true); // card "Estratégias se formando ao vivo"
   const [watchlistShowAll, setWatchlistShowAll] = useState(false); // dentro do card: top 2 vs lista inteira
+  // Entrada com atraso de 2s armada (ver placeOrder) — null = nenhuma esperando pra disparar.
+  const [scheduledOrder, setScheduledOrder] = useState<{ direction: Direction; fireAtSec: number } | null>(null);
+  const scheduledOrderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'placed' | 'blocked' | 'error'>('idle');
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
   // 2+ entradas simultaneas no mesmo ativo sao permitidas (cliques repetidos em Comprar/Vender
@@ -507,6 +510,7 @@ export function ChartPage() {
   useEffect(() => {
     return () => {
       if (candleCloseRecheckTimerRef.current !== null) clearTimeout(candleCloseRecheckTimerRef.current);
+      if (scheduledOrderTimerRef.current !== null) clearTimeout(scheduledOrderTimerRef.current);
     };
   }, []);
 
@@ -577,10 +581,10 @@ export function ChartPage() {
 
   // Envio MANUAL de ordem — clique em Comprar/Vender. SEM confirmacao aqui, nem em REAL: a
   // confirmacao de "dinheiro de verdade" ja acontece uma unica vez, no momento de TROCAR pra
-  // REAL (ver changeMode) — depois disso, cada clique precisa sair na hora, sem dialogo, sem
+  // REAL (ver Layout/Header) — depois disso, cada clique precisa sair na hora, sem dialogo, sem
   // delay, pra entrar exatamente no segundo certo. Em OBSERVATION, nem tenta (o SafetyGate do
   // servidor bloquearia de qualquer forma, mas aqui evitamos a chamada e explicamos o motivo).
-  async function placeOrder(direction: Direction) {
+  async function executeOrderNow(direction: Direction) {
     if (watchingAssetId === null || !settings) return;
     if (settings.mode === 'OBSERVATION') {
       setOrderStatus('blocked');
@@ -626,6 +630,43 @@ export function ChartPage() {
       setOrderStatus('error');
       setOrderMessage(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  // Entrada com atraso de 2s (pedido explicito, liga/desliga em Settings.delayedEntryEnabled):
+  // em vez de enviar a ordem no instante do clique, espera ate faltarem EXATAMENTE 2s pro minuto
+  // fechar (2s antes da proxima vela comecar) e SO ENTAO chama executeOrderNow — que calcula
+  // preco/expiracao na hora que roda de verdade, entao ja sai certo mesmo disparando depois.
+  // So 1 ordem agendada por vez (um novo clique antes do disparo cancela e reagenda a nova).
+  function placeOrder(direction: Direction) {
+    // Sem atraso ligado, ou sem como operar agora (sem ativo escolhido, ou settings ainda nao
+    // carregou) — chama direto, sem agendar nada: executeOrderNow ja sabe mostrar o motivo do
+    // bloqueio (ex.: "escolha um ativo", OBSERVATION nunca envia). Agendar aqui so pra falhar
+    // 2s depois, silenciosamente, seria pior.
+    if (!settings?.delayedEntryEnabled || watchingAssetId === null) {
+      executeOrderNow(direction);
+      return;
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    const secondsToClose = 60 - (nowSec % 60);
+    const fireInSeconds = secondsToClose - 2;
+    if (fireInSeconds <= 0) {
+      // Ja estamos a 2s ou menos do fechamento (ou passou) — nao da mais pra esperar, dispara na hora.
+      executeOrderNow(direction);
+      return;
+    }
+    if (scheduledOrderTimerRef.current !== null) clearTimeout(scheduledOrderTimerRef.current);
+    setScheduledOrder({ direction, fireAtSec: nowSec + fireInSeconds });
+    scheduledOrderTimerRef.current = setTimeout(() => {
+      scheduledOrderTimerRef.current = null;
+      setScheduledOrder(null);
+      executeOrderNow(direction);
+    }, fireInSeconds * 1000);
+  }
+
+  function cancelScheduledOrder() {
+    if (scheduledOrderTimerRef.current !== null) clearTimeout(scheduledOrderTimerRef.current);
+    scheduledOrderTimerRef.current = null;
+    setScheduledOrder(null);
   }
 
   const markers: ChartMarker[] = best && best !== 'loading' ? [...best.markers] : [];
@@ -926,6 +967,50 @@ export function ChartPage() {
           ) : (
             <div className="flex flex-col gap-1.5">{sortedWatchlist.map(([key, item]) => renderWatchlistRow(key, item))}</div>
           )}
+        </div>
+      )}
+
+      {/* Relogio ao vivo + atraso de 2s: pedido explicito — ajuda a ver exatamente o horario da
+          entrada (mesmo relogio usado pra calcular tudo no resto da tela, nunca "confia" no
+          grafico, que pode ter alguns ms de atraso de rede) e deixa ligar/desligar a entrada
+          atrasada (ver placeOrder: quando ligado, o clique em Comprar/Vender so dispara de
+          verdade faltando 2s pro minuto fechar, nao no instante do clique). */}
+      <div className="mx-3 sm:mx-6 mt-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 flex items-center justify-between gap-2 text-xs">
+        <span className="flex items-center gap-2 text-slate-300">
+          <span className="text-sm">🕐</span>
+          <span className="font-mono text-sm font-semibold text-slate-100 tabular-nums">
+            {now.toLocaleTimeString('pt-BR', { hour12: false })}
+          </span>
+          <span className={secondsToMinuteClose <= 5 ? 'text-amber-400 font-semibold' : 'text-slate-500'}>
+            {secondsToMinuteClose}s p/ fechar
+          </span>
+        </span>
+        <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+          <span className="text-slate-400 whitespace-nowrap">Entrar 2s antes</span>
+          <input
+            type="checkbox"
+            checked={!!settings?.delayedEntryEnabled}
+            onChange={(e) => updateSettingsQuick({ delayedEntryEnabled: e.target.checked })}
+            className="accent-sky-500 h-3.5 w-3.5"
+          />
+        </label>
+      </div>
+
+      {/* Entrada com atraso de 2s ja armada — mostra a direcao e uma contagem regressiva ate o
+          disparo de verdade, com opcao de cancelar antes que saia. */}
+      {scheduledOrder && (
+        <div
+          className={`mx-3 sm:mx-6 mt-2 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs font-semibold ${
+            scheduledOrder.direction === 'CALL' ? 'bg-emerald-600/20 border border-emerald-600 text-emerald-300' : 'bg-rose-600/20 border border-rose-600 text-rose-300'
+          }`}
+        >
+          <span>
+            ⏳ Entrada agendada ({scheduledOrder.direction === 'CALL' ? 'COMPRA' : 'VENDA'}) — disparando em{' '}
+            {Math.max(0, scheduledOrder.fireAtSec - Math.floor(now.getTime() / 1000))}s
+          </span>
+          <button type="button" onClick={cancelScheduledOrder} className="underline underline-offset-2 shrink-0">
+            Cancelar
+          </button>
         </div>
       )}
 
